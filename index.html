@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a66c2">
+<link rel="icon" href="icone-192.png">
+<link rel="apple-touch-icon" href="icone-192.png">
+<title>MiamLyon</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Mapstr perso : page de la web app (incréments A1 carte, A2 filtres, A2b liste et Actualiser, A4a modifier, A4b ajouter). Source : Mapstr perso/apps_script/Carte.html -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root { --fond: #fff; --texte: #1d1d1f; --doux: #6e6e73; --bord: #d2d2d7; --accent: #0a66c2;
+          --teste: #1e8e3e; --atester: #0a66c2; --decu: #8e8e93; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+               color: var(--texte); background: var(--fond); }
+  #carte { position: absolute; inset: 0; }
+  #barre { position: absolute; z-index: 1000; top: 10px; left: 10px; right: 10px; display: flex; gap: 8px; }
+  #recherche { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--bord); border-radius: 10px;
+               font: inherit; font-size: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.15); } /* 16 px : pas de zoom Safari */
+  #btnActualiser { padding: 10px 12px; border: 1px solid var(--bord); border-radius: 10px; background: var(--fond);
+                   box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+  #btnActualiser:disabled { opacity: .5; }
+  #vues { position: absolute; z-index: 1000; top: 58px; left: 50%; transform: translateX(-50%); display: flex;
+          border: 1px solid var(--bord); border-radius: 999px; background: var(--fond); overflow: hidden;
+          box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+  #vues button { border: 0; background: none; padding: 6px 18px; font-size: 14px; }
+  #vues button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  #liste { position: absolute; z-index: 999; inset: 96px 0 0 0; padding: 4px 10px 40px; overflow: auto; background: #f5f5f7;
+           display: none; }
+  body.mode-liste #liste { display: block; }
+  body.mode-liste { background: #f5f5f7; }
+  #btnMoi { position: absolute; z-index: 1000; right: 20px; bottom: 160px; width: 44px; height: 44px; border-radius: 50%;
+            border: 1px solid var(--bord); background: var(--fond); color: var(--accent); font-size: 22px; line-height: 1;
+            box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+  body.mode-liste #btnMoi { display: none; }
+  body.mode-liste #carte { visibility: hidden; } /* garde sa taille : pas de recalcul au retour */
+  .tri { display: flex; justify-content: space-between; align-items: center; margin: 0 2px 8px; font-size: 13px;
+         color: var(--doux); }
+  .lieu { background: var(--fond); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px;
+          box-shadow: 0 1px 2px rgba(0,0,0,.08); cursor: pointer; }
+  .lieu .ligne1 { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .lieu .nom { font-weight: 600; }
+  .lieu .note { white-space: nowrap; font-size: 13px; }
+  .lieu .sous { color: var(--doux); font-size: 13px; }
+  .statut { display: inline-block; font-size: 12px; font-weight: 600; color: #fff; padding: 1px 8px; border-radius: 999px;
+            margin-right: 6px; vertical-align: 1px; }
+  #btnAjouter { position: absolute; z-index: 1000; right: 16px; bottom: 96px; width: 52px; height: 52px; border-radius: 50%;
+                border: 0; background: var(--accent); color: #fff; font-size: 30px; line-height: 1;
+                box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+  #ajout { position: absolute; z-index: 1003; left: 0; right: 0; bottom: 0; max-height: 85%; overflow: auto; background: var(--fond);
+           border-radius: 14px 14px 0 0; box-shadow: 0 -2px 12px rgba(0,0,0,.2); padding: 14px 16px 20px; display: none; }
+  #ajout.ouvert { display: block; }
+  /* Téléphone : panneaux en plein écran depuis le haut, champs en haut. Un panneau collé en bas obligeait Brave/Chrome Android
+     à faire remonter la page de Google quand le clavier s'ouvre, ce qui décalait ensuite la zone tactile (17/10/2026). */
+  @media (max-width: 759px) { html #panneau, html #edition, html #ajout { top: 0; bottom: 0; max-height: none; border-radius: 0; }
+    #edition .entete, #ajout .entete, #panneau .entete { position: sticky; top: -14px; background: var(--fond); padding: 8px 0; z-index: 1; } }
+  @media (min-width: 760px) { #ajout { left: auto; top: 64px; right: 10px; width: 380px; max-height: none; bottom: 10px; border-radius: 14px; } }
+  .candidat { display: block; width: 100%; text-align: left; background: var(--fond); border: 1px solid var(--bord); border-radius: 10px;
+              padding: 8px 10px; margin-top: 8px; color: var(--texte); }
+  .candidat[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .candidat .sous, .doublon .sous { color: var(--doux); font-size: 13px; }
+  .doublon { background: #fff8e1; border-radius: 10px; padding: 8px 10px; margin-top: 10px; }
+  #e-adresse { color: var(--doux); font-size: 14px; margin: 2px 0 0; }
+  #e-gemini { font-size: 13px; color: var(--doux); margin: 8px 0 0; }
+  .pastille { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+  .lieu .detail { display: none; border-top: 1px solid #ececf0; margin-top: 8px; padding-top: 4px; }
+  .lieu.deplie .detail { display: block; }
+  .lieu .resume .etiq { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 999px;
+                        background: #f0f0f3; margin: 4px 2px 0 0; }
+  @media (min-width: 760px) { #liste { padding-left: max(10px, calc(50% - 360px)); padding-right: max(10px, calc(50% - 360px)); } }
+  button { font: inherit; cursor: pointer; }
+  #btnFiltres { padding: 10px 14px; border: 1px solid var(--bord); border-radius: 10px; background: var(--fond);
+                box-shadow: 0 1px 4px rgba(0,0,0,.15); white-space: nowrap; }
+  #btnFiltres.actif { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #compteur { position: absolute; z-index: 1000; left: 10px; bottom: 22px; padding: 6px 10px; border-radius: 8px;
+              background: rgba(255,255,255,.92); font-size: 13px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+  #panneau, #edition { position: absolute; z-index: 1001; left: 0; right: 0; bottom: 0; max-height: 75%; overflow: auto;
+             background: var(--fond); border-radius: 14px 14px 0 0; box-shadow: 0 -2px 12px rgba(0,0,0,.2);
+             padding: 14px 16px 20px; display: none; }
+  #panneau.ouvert, #edition.ouvert { display: block; }
+  #edition { z-index: 1003; }
+  @media (min-width: 760px) { #panneau, #edition { left: auto; top: 64px; right: 10px; width: 380px; max-height: none;
+                              bottom: 10px; border-radius: 14px; } }
+  .entete { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .entete h2 { font-size: 17px; margin: 0; }
+  .lien { background: none; border: 0; color: var(--accent); padding: 4px; }
+  fieldset { border: 0; padding: 0; margin: 12px 0 0; }
+  legend { font-weight: 600; font-size: 13px; color: var(--doux); text-transform: uppercase; letter-spacing: .03em;
+           margin-bottom: 6px; }
+  .puces { display: flex; flex-wrap: wrap; gap: 6px; }
+  .puce { padding: 5px 10px; border: 1px solid var(--bord); border-radius: 999px; background: var(--fond);
+          font-size: 14px; }
+  .puce[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .puce .n { opacity: .65; font-size: 12px; margin-left: 3px; }
+  select { font: inherit; font-size: 16px; padding: 6px 8px; border: 1px solid var(--bord); border-radius: 8px; }
+  label.case { display: flex; gap: 8px; align-items: center; }
+  .fiche h3 { margin: 0 0 2px; font-size: 16px; }
+  .fiche .sous { color: var(--doux); font-size: 13px; }
+  .fiche p { margin: 6px 0 0; }
+  .fiche .etiq { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 999px;
+                 background: #f0f0f3; margin: 2px 2px 0 0; }
+  .leaflet-popup-content { margin: 12px 14px; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .form .champ, #a-resultats .champ { display: block; margin: 14px 0 6px; font-weight: 600; font-size: 13px; color: var(--doux);
+                 text-transform: uppercase; letter-spacing: .03em; }
+  .form select, .form textarea, .form input[type="text"], .form input[type="search"] { width: 100%; font: inherit; font-size: 16px; padding: 8px 10px;
+                 border: 1px solid var(--bord); border-radius: 8px; background: var(--fond); color: var(--texte); }
+  .etoiles { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+  #e-etoiles button { font-size: 28px; line-height: 1; background: none; border: 0; padding: 0 2px; color: #c7c7cc; }
+  #e-etoiles button.plein { color: #f5a623; }
+  #e-etoiles button.demi { color: #f5a623; opacity: .55; }
+  #e-note-txt { margin: 0 8px; font-size: 14px; }
+  .ajout-tag { display: flex; gap: 6px; margin-top: 8px; }
+  .puce .x { margin-left: 4px; opacity: .75; }
+  .form label.case { margin-top: 14px; }
+  .actions { position: sticky; bottom: -20px; display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+             padding: 10px 0 4px; background: var(--fond); }
+  .btn-principal { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; }
+  .btn-principal:disabled { opacity: .5; }
+  .btn-second { background: var(--fond); color: var(--texte); border: 1px solid var(--bord); border-radius: 10px; padding: 10px 14px; }
+  #e-erreur { color: #8a1c13; background: #fdecea; border-radius: 8px; padding: 8px 10px; display: none; margin: 12px 0 0; }
+  #toast { position: absolute; z-index: 1004; left: 50%; bottom: 70px; transform: translateX(-50%); background: #1d1d1f;
+           color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 14px; display: none; }
+  #erreur { position: absolute; z-index: 1002; top: 64px; left: 10px; right: 10px; padding: 10px; border-radius: 8px;
+            background: #fdecea; color: #8a1c13; display: none; }
+  /* R16 : écran du code secret de la page autonome (hors Google) */
+  #codeApp { position: fixed; inset: 0; z-index: 2000; background: var(--fond); padding: 24px 16px; display: none; }
+  #codeApp.ouvert { display: block; }
+  #codeApp form { max-width: 420px; margin: 0 auto; }
+  #codeApp input { width: 100%; padding: 10px 12px; border: 1px solid var(--bord); border-radius: 10px; font: inherit;
+                   font-size: 16px; margin: 8px 0 12px; }
+</style>
+</head>
+<body>
+<div id="carte"></div>
+<div id="barre">
+  <input id="recherche" type="search" placeholder="Chercher un nom, une adresse…" aria-label="Chercher un lieu">
+  <button id="btnFiltres" type="button" aria-expanded="false">Filtres</button>
+  <button id="btnActualiser" type="button" aria-label="Actualiser depuis le Sheet" title="Actualiser depuis le Sheet">↻</button>
+</div>
+<div id="vues" role="group" aria-label="Affichage">
+  <button type="button" id="vueCarte" aria-pressed="true">Carte</button>
+  <button type="button" id="vueListe" aria-pressed="false">Liste</button>
+</div>
+<div id="liste" aria-label="Liste des lieux">
+  <div class="tri"><span id="nbListe"></span>
+    <label>Trier : <select id="tri"><option value="nom">Nom</option><option value="note">Meilleures notes</option>
+      <option value="recent">Derniers ajoutés</option><option value="type">Type et cuisine</option></select></label></div>
+  <div id="lignes"></div>
+</div>
+<div id="compteur">Chargement…</div>
+<div id="erreur" role="alert"></div>
+<div id="panneau" aria-label="Filtres">
+  <div class="entete"><h2>Filtres</h2>
+    <span><button class="lien" id="btnRaz" type="button">Tout effacer</button>
+          <button class="lien" id="btnFermer" type="button">Fermer</button></span></div>
+  <fieldset><legend>Statut</legend><div class="puces" id="f-statut"></div></fieldset>
+  <fieldset><legend>Type</legend><div class="puces" id="f-type"></div></fieldset>
+  <fieldset><legend>Cuisine</legend><div class="puces" id="f-cuisine"></div></fieldset>
+  <fieldset><legend>Note minimale</legend>
+    <select id="f-note"><option value="0">Toutes</option><option value="3">3 et plus</option>
+      <option value="4">4 et plus</option><option value="4.5">4,5 et plus</option><option value="5">5</option></select>
+  </fieldset>
+  <fieldset><legend>À commander</legend>
+    <label class="case"><input type="checkbox" id="f-commander"> Seulement les lieux « à commander »</label></fieldset>
+  <fieldset><legend>Tags (le lieu doit avoir tous les tags choisis)</legend><div class="puces" id="f-tags"></div></fieldset>
+</div>
+<div id="edition" aria-label="Modifier un lieu">
+  <div class="entete"><h2 id="e-titre">Modifier</h2><button class="lien" id="e-fermer" type="button">Fermer</button></div>
+  <p id="e-adresse"></p><p id="e-gemini"></p>
+  <form id="e-form" class="form" autocomplete="off">
+    <span class="champ">Statut</span><div class="puces" id="e-statut"></div>
+    <div id="e-bloc-note"><span class="champ">Note</span>
+      <div class="etoiles"><span id="e-etoiles"></span><span id="e-note-txt"></span>
+        <button class="lien" type="button" id="e-sans-note">Sans note</button></div></div>
+    <label class="champ" for="e-type">Type</label><select id="e-type"></select>
+    <label class="champ" for="e-cuisine">Cuisine</label><select id="e-cuisine"></select>
+    <button class="lien" type="button" id="e-plus-c2">+ 2e cuisine</button>
+    <div id="e-bloc-c2"><label class="champ" for="e-cuisine2">Cuisine 2</label><select id="e-cuisine2"></select></div>
+    <span class="champ">Tags</span><div class="puces" id="e-tags"></div>
+    <input id="e-tag" type="search" placeholder="Chercher ou créer un tag…" aria-label="Chercher ou créer un tag" style="margin-top: 8px">
+    <div class="puces" id="e-tag-res" style="margin-top: 6px"></div>
+    <label class="case"><input type="checkbox" id="e-commander"> À commander</label>
+    <label class="champ" for="e-commentaire">Commentaire</label><textarea id="e-commentaire" rows="3"></textarea>
+    <p id="e-erreur" role="alert"></p>
+    <div class="actions"><button type="button" class="btn-second" id="e-annuler">Annuler</button>
+      <button type="submit" class="btn-principal" id="e-enregistrer">Enregistrer</button></div>
+  </form>
+</div>
+<button id="btnMoi" type="button" aria-label="Me localiser" title="Me localiser">⌖</button>
+<button id="btnAjouter" type="button" aria-label="Ajouter un lieu" title="Ajouter un lieu">+</button>
+<div id="ajout" aria-label="Ajouter un lieu">
+  <div class="entete"><h2>Ajouter un lieu</h2><button class="lien" id="a-fermer" type="button">Fermer</button></div>
+  <form id="a-form" class="form" autocomplete="off">
+    <label class="champ" for="a-nom">Nom</label><input id="a-nom" type="text" placeholder="ex. Le Kiosque">
+    <label class="champ" for="a-precision">Précision (facultatif)</label><input id="a-precision" type="text" placeholder="rue, quartier…">
+    <div class="actions" style="position: static"><button type="submit" class="btn-principal" id="a-chercher">Chercher</button></div>
+  </form>
+  <div id="a-doublons"></div>
+  <div id="a-resultats"></div>
+  <p id="a-erreur" class="sous" role="alert"></p>
+</div>
+<div id="toast" role="status"></div>
+<div id="codeApp" aria-label="Code de l'app">
+  <form id="c-form" autocomplete="off">
+    <h2>Code de l'app</h2>
+    <p class="sous" id="c-message">Tape le code de l'app (une seule fois sur ce téléphone).</p>
+    <input id="c-code" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+    <div class="actions" style="position: static"><button type="submit" class="btn-principal">Valider</button></div>
+  </form>
+</div>
+<script>window.API_URL = "https://script.google.com/macros/s/AKfycbx3rpojaH-rbC6p3LBqPi2lxzyv9jbV2zxheMn2riWqLvGfvOnME0e4_kVPaCJBCVE7Wg/exec";
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});</script>
+<script>
+const COULEURS = { 'Testé': '#1e8e3e', 'À tester': '#0a66c2', 'Déçu': '#8e8e93' };
+const STATUTS = ['Testé', 'À tester', 'Déçu'];
+let LIEUX = [], carte, calque, MARQUEURS = {}, LISTES = null, EDIT = null;
+const DEPLIES = new Set(); // fiches dépliées dans la liste
+// Choix courants : ensembles de valeurs cochées. « Déçu » est masqué par défaut (R9).
+const choix = { statut: new Set(['Testé', 'À tester']), type: new Set(), cuisine: new Set(), tags: new Set() };
+
+const norm = s => String(s || '').trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[̀-ͯ]/g, '');
+const tagsDe = l => String(l.tags || '').split(',').map(s => s.trim()).filter(Boolean);
+const echap = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const etoiles = n => n == null ? '' : '★'.repeat(Math.floor(n)) + (n % 1 >= .5 ? '½' : '') + ' ' + String(n).replace('.', ',') + '/5';
+
+function prep(l) {
+  l._tags = tagsDe(l); l._tagsN = l._tags.map(norm); l._cuisines = [l.cuisine, l.cuisine2].filter(Boolean);
+  l._texte = norm([l.nom, l.adresse, l.cuisine, l.cuisine2, l.tags, l.commentaire].join(' '));
+  return l;
+}
+function preparer(lieux) { LIEUX = lieux.map(prep); }
+function demarrer(lieux) {
+  preparer(lieux);
+  carte = L.map('carte', { zoomControl: false }).setView([45.760, 4.840], 13);
+  L.control.zoom({ position: 'bottomright' }).addTo(carte);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19,
+    attribution: '&copy; contributeurs <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(carte);
+  calque = L.layerGroup().addTo(carte);
+  construireFiltres();
+  afficher(true);
+  // Dès que l'utilisateur regarde quelque chose (fiche ouverte, carte déplacée), la position ne recentre plus la carte.
+  carte.on('popupopen dragstart', () => { FOCUS_LIEU = true; });
+  localiser('demarrage');
+}
+
+function compter(cle, valeurs) {
+  const n = {}; LIEUX.forEach(l => valeurs(l).forEach(v => { if (v) n[v] = (n[v] || 0) + 1; })); return n;
+}
+function puces(id, cle, comptes, ordre) {
+  const el = document.getElementById(id); el.innerHTML = '';
+  const cles = ordre || Object.keys(comptes).sort((a, b) => comptes[b] - comptes[a] || a.localeCompare(b, 'fr'));
+  cles.filter(k => comptes[k]).forEach(k => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'puce';
+    b.setAttribute('aria-pressed', choix[cle].has(k)); b.innerHTML = echap(k) + '<span class="n">' + comptes[k] + '</span>';
+    b.onclick = () => { choix[cle].has(k) ? choix[cle].delete(k) : choix[cle].add(k);
+                        b.setAttribute('aria-pressed', choix[cle].has(k)); afficher(); };
+    el.appendChild(b);
+  });
+}
+function construireFiltres() {
+  puces('f-statut', 'statut', compter('statut', l => [l.statut]), STATUTS);
+  puces('f-type', 'type', compter('type', l => [l.type]));
+  puces('f-cuisine', 'cuisine', compter('cuisine', l => l._cuisines));
+  // Tags regroupés sans tenir compte des majuscules ni des accents ; on affiche la forme la plus fréquente.
+  const formes = {}; LIEUX.forEach(l => l._tags.forEach(t => { const k = norm(t);
+    (formes[k] = formes[k] || {})[t] = (formes[k][t] || 0) + 1; }));
+  const comptes = {}; window.TAG_FORME = {};
+  Object.entries(formes).forEach(([k, f]) => { const affiche = Object.keys(f).sort((a, b) => f[b] - f[a])[0];
+    TAG_FORME[affiche] = k; comptes[affiche] = Object.values(f).reduce((a, b) => a + b, 0); });
+  puces('f-tags', 'tags', comptes);
+}
+
+function garde(l) {
+  if (choix.statut.size && !choix.statut.has(l.statut)) return false;
+  if (choix.type.size && !choix.type.has(l.type)) return false;
+  if (choix.cuisine.size && !l._cuisines.some(c => choix.cuisine.has(c))) return false;
+  const nmin = +document.getElementById('f-note').value; if (nmin && !(l.note >= nmin)) return false;
+  if (document.getElementById('f-commander').checked && !l.a_commander) return false;
+  for (const t of choix.tags) if (!l._tagsN.includes(TAG_FORME[t])) return false;
+  const q = norm(document.getElementById('recherche').value); if (q && !l._texte.includes(q)) return false;
+  return true;
+}
+
+function fiche(l) {
+  const lignes = [`<h3>${echap(l.nom)}</h3>`,
+    `<div class="sous">${echap([l.type, l._cuisines.join(' + ')].filter(Boolean).join(' · '))} — ${echap(l.statut)}</div>`];
+  if (l.note != null) lignes.push(`<p>${etoiles(l.note)}</p>`);
+  if (l.a_commander) lignes.push('<p><span class="etiq">À commander</span></p>');
+  if (l.adresse) lignes.push(`<p>${echap(l.adresse)}</p>`);
+  if (l.horaires || l.horaires_osm) lignes.push(`<p class="sous">${echap(l.horaires || l.horaires_osm)}</p>`);
+  if (l.commentaire) lignes.push(`<p><em>${echap(l.commentaire)}</em></p>`);
+  if (l._tags.length) lignes.push('<p>' + l._tags.map(t => `<span class="etiq">${echap(t)}</span>`).join('') + '</p>');
+  const liens = [];
+  if (/^https?:/.test(l.lien_maps)) liens.push(`<a href="${echap(l.lien_maps)}" target="_blank" rel="noopener">Itinéraire</a>`);
+  else if (l.lat != null) liens.push(`<a href="https://www.openstreetmap.org/?mlat=${l.lat}&mlon=${l.lng}#map=18/${l.lat}/${l.lng}" target="_blank" rel="noopener">Voir sur OpenStreetMap</a>`);
+  if (/^https?:/.test(l.lien_commande)) liens.push(`<a href="${echap(l.lien_commande)}" target="_blank" rel="noopener">Commander</a>`);
+  if (liens.length) lignes.push('<p>' + liens.join(' · ') + '</p>');
+  lignes.push(`<p><button class="btn-second" type="button" data-modifier="${echap(l.id)}">Modifier</button></p>`);
+  return '<div class="fiche">' + lignes.join('') + '</div>';
+}
+
+function afficher(cadrer) {
+  calque.clearLayers(); MARQUEURS = {};
+  const vus = LIEUX.filter(garde), places = vus.filter(l => l.lat != null && l.lng != null);
+  places.forEach(l => MARQUEURS[l.id] = L.circleMarker([l.lat, l.lng], { radius: 8, weight: 2, color: '#fff', fillOpacity: .95,
+      fillColor: COULEURS[l.statut] || '#444' }) // la marge haute garde la fiche sous la barre de recherche
+      .bindPopup(fiche(l), { maxWidth: 280, autoPanPaddingTopLeft: [10, 70] }).addTo(calque));
+  const sans = vus.length - places.length;
+  document.getElementById('compteur').textContent = places.length + ' lieu' + (places.length > 1 ? 'x' : '') +
+    ' sur la carte' + (sans ? ' · ' + sans + ' sans position' : '');
+  const actifs = choix.type.size + choix.cuisine.size + choix.tags.size + (+document.getElementById('f-note').value ? 1 : 0)
+    + (document.getElementById('f-commander').checked ? 1 : 0) + (choix.statut.size === 2 && !choix.statut.has('Déçu') ? 0 : 1);
+  const btn = document.getElementById('btnFiltres');
+  btn.textContent = actifs ? 'Filtres (' + actifs + ')' : 'Filtres'; btn.classList.toggle('actif', !!actifs);
+  if (cadrer && places.length) carte.fitBounds(L.latLngBounds(places.map(l => [l.lat, l.lng])), { padding: [40, 40], maxZoom: 16 });
+  afficherListe(vus);
+  window.ETAT = { affiches: places.length, sansPosition: sans, total: LIEUX.length, liste: vus.length }; // pour les vérifications
+}
+
+// ---------------------------------------------------------------- vue liste (A2b)
+const TRIS = {
+  nom: (a, b) => a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }),
+  note: (a, b) => (b.note ?? -1) - (a.note ?? -1) || TRIS.nom(a, b),
+  recent: (a, b) => b.id.localeCompare(a.id) || TRIS.nom(a, b), // les ID croissent à chaque ajout
+  type: (a, b) => a.type.localeCompare(b.type, 'fr') || (a.cuisine || '~').localeCompare(b.cuisine || '~', 'fr') || TRIS.nom(a, b)
+};
+function afficherListe(vus) {
+  const tries = vus.slice().sort(TRIS[document.getElementById('tri').value] || TRIS.nom);
+  document.getElementById('nbListe').textContent = tries.length + ' lieu' + (tries.length > 1 ? 'x' : '');
+  document.getElementById('lignes').innerHTML = tries.map(l => {
+    const tags = l._tags.slice(0, 4).map(t => `<span class="etiq">${echap(t)}</span>`).join('') + (l._tags.length > 4 ? ' …' : '');
+    const voir = l.lat != null ? `<p><button class="lien" type="button" data-carte="${echap(l.id)}">Voir sur la carte</button></p>`
+                               : '<p class="sous">Pas encore de position sur la carte.</p>';
+    return `<div class="lieu${DEPLIES.has(l.id) ? ' deplie' : ''}" data-id="${echap(l.id)}"><div class="resume"><div class="ligne1"><span class="nom">` +
+      `<span class="pastille" style="background:${COULEURS[l.statut] || '#444'}"></span>${echap(l.nom)}</span>` +
+      `<span class="note">${l.note != null ? etoiles(l.note) : ''}</span></div>` +
+      `<div class="sous"><span class="statut" style="background:${COULEURS[l.statut] || '#444'}">${echap(l.statut || '?')}</span>` +
+      `${echap([l.type, l._cuisines.join(' + ')].filter(Boolean).join(' · '))}` +
+      `${l.adresse ? ' — ' + echap(l.adresse) : ''}</div>${tags ? '<div>' + tags + '</div>' : ''}</div>` +
+      `<div class="detail"><p class="sous">${echap(l.statut)}</p>${fiche(l).replace(/<h3>.*?<\/h3><div class="sous">.*?<\/div>/, '')}${voir}</div></div>`;
+  }).join('');
+}
+document.getElementById('lignes').onclick = e => {
+  const b = e.target.closest('[data-carte]');
+  if (b) { voirSurCarte(b.dataset.carte); return; }
+  if (e.target.closest('a, button')) return; // liens Itinéraire / Commander, bouton Modifier
+  const c = e.target.closest('.lieu'); if (!c) return;
+  c.classList.toggle('deplie'); c.classList.contains('deplie') ? DEPLIES.add(c.dataset.id) : DEPLIES.delete(c.dataset.id);
+};
+// ---------------------------------------------------------------- géolocalisation
+let FOCUS_LIEU = false, MOI = null;
+const PRES_DE_LYON = ([la, lo]) => la > 45.55 && la < 45.95 && lo > 4.55 && lo < 5.25;
+/** Point bleu « Tu es ici » ; recentre (zoom 15) au démarrage si aucun lieu n'est regardé, ou à la demande (bouton ⌖). */
+function localiser(origine) {
+  if (!navigator.geolocation) { if (origine === 'bouton') toast('Géolocalisation indisponible'); return; }
+  navigator.geolocation.getCurrentPosition(p => {
+    const pos = [p.coords.latitude, p.coords.longitude];
+    if (!MOI) { // halo clair + point : ne se confond pas avec les épingles bleues « À tester »
+      MOI = L.layerGroup([L.circleMarker(pos, { radius: 20, stroke: false, fillColor: '#4285f4', fillOpacity: .18, interactive: false }),
+        L.circleMarker(pos, { radius: 7, weight: 3, color: '#fff', fillColor: '#4285f4', fillOpacity: 1, interactive: false })]).addTo(carte);
+    } else MOI.eachLayer(c => c.setLatLng(pos));
+    if (origine === 'bouton') { FOCUS_LIEU = false; carte.setView(pos, Math.max(carte.getZoom(), 15)); }
+    else if (!FOCUS_LIEU && PRES_DE_LYON(pos)) carte.setView(pos, 15, { animate: false });
+  }, () => { if (origine === 'bouton') toast('Position refusée ou indisponible'); },
+  { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+}
+document.getElementById('btnMoi').onclick = () => localiser('bouton');
+// La 1re demande peut expirer pendant que la fenêtre d'autorisation attend : on relance dès que l'accès est donné.
+try { navigator.permissions.query({ name: 'geolocation' }).then(p => { p.onchange = () => { if (p.state === 'granted') localiser('demarrage'); }; }); } catch (e) {}
+
+function voirSurCarte(id) {
+  FOCUS_LIEU = true;
+  vue('carte'); const m = MARQUEURS[id]; if (!m) return;
+  carte.setView(m.getLatLng(), Math.max(carte.getZoom(), 16)); m.openPopup();
+}
+function vue(v) {
+  document.body.classList.toggle('mode-liste', v === 'liste');
+  document.getElementById('vueCarte').setAttribute('aria-pressed', v === 'carte');
+  document.getElementById('vueListe').setAttribute('aria-pressed', v === 'liste');
+  document.getElementById('compteur').style.display = v === 'liste' ? 'none' : '';
+  if (v === 'carte' && carte) carte.invalidateSize();
+  try { localStorage.setItem('mapstr-vue', v); } catch (e) {} // simple confort : le dernier affichage choisi
+}
+document.getElementById('vueCarte').onclick = () => vue('carte');
+document.getElementById('vueListe').onclick = () => vue('liste');
+document.getElementById('tri').onchange = () => afficher();
+
+// ---------------------------------------------------------------- appels au serveur (Apps Script, ou serveur de test local)
+function appel(nom, ...args) {
+  return new Promise((ok, ko) => {
+    if (window.google && google.script && google.script.run)
+      google.script.run.withSuccessHandler(ok).withFailureHandler(ko)[nom](...args);
+    else if (window.API_URL) appelApi(nom, args).then(ok, ko);
+    else if (window.SERVEUR_TEST) { try { ok(window.SERVEUR_TEST[nom](...args)); } catch (e) { ko(e); } }
+    else ko(new Error('aucune source de données'));
+  });
+}
+// Page autonome (R16) : doPost avec le code secret, gardé dans ce téléphone (jamais dans le code de la page).
+let CODE_MEMOIRE = '', CODE_DEMANDE = null;
+const lireCode = () => { try { return localStorage.getItem('mapstr-code') || CODE_MEMOIRE; } catch (e) { return CODE_MEMOIRE; } };
+function garderCode(c) {
+  CODE_MEMOIRE = c;
+  try { if (c) localStorage.setItem('mapstr-code', c); else localStorage.removeItem('mapstr-code'); } catch (e) {}
+}
+/** Un seul écran de code à la fois, même si plusieurs appels le demandent ensemble. */
+function demanderCode(message) {
+  if (CODE_DEMANDE) return CODE_DEMANDE;
+  $('c-message').textContent = message || "Tape le code de l'app (une seule fois sur ce téléphone).";
+  $('c-code').value = ''; $('codeApp').classList.add('ouvert'); $('c-code').focus();
+  return CODE_DEMANDE = new Promise(ok => {
+    $('c-form').onsubmit = ev => {
+      ev.preventDefault(); const c = $('c-code').value.trim(); if (!c) return;
+      garderCode(c); $('codeApp').classList.remove('ouvert'); $('c-code').blur(); CODE_DEMANDE = null; ok(c);
+    };
+  });
+}
+async function appelApi(nom, args) {
+  let code = lireCode() || await demanderCode();
+  for (;;) {
+    const r = await fetch(window.API_URL, { method: 'POST', body: JSON.stringify({ code, appel: nom, args }),
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' } }); // text/plain : pas de requête préalable CORS
+    if (!r.ok) throw new Error('serveur injoignable (' + r.status + ')');
+    const rep = await r.json();
+    if (rep.ok) return rep.resultat;
+    if (rep.erreur !== 'CODE REFUSÉ') throw new Error(rep.erreur);
+    if (lireCode() && lireCode() !== code) { code = lireCode(); continue; } // un autre appel a déjà obtenu un nouveau code
+    garderCode(''); code = await demanderCode('Code refusé : vérifie-le et tape-le à nouveau.');
+  }
+}
+function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.style.display = 'block';
+                    clearTimeout(toast.h); toast.h = setTimeout(() => { el.style.display = 'none'; }, 2500); }
+
+// ---------------------------------------------------------------- Actualiser : relit le Sheet, garde filtres et vue
+document.getElementById('btnActualiser').onclick = () => {
+  const btn = document.getElementById('btnActualiser'); btn.disabled = true;
+  appel('lieuxPourCarte').then(lieux => { preparer(lieux); construireFiltres(); afficher(); toast('À jour : ' + lieux.length + ' lieux'); })
+    .catch(erreur).finally(() => { btn.disabled = false; });
+};
+
+// ---------------------------------------------------------------- Modifier un lieu (A4a)
+const $ = id => document.getElementById(id);
+function remplirSelect(id, valeurs, actuelle) {
+  const v = valeurs.slice(); if (actuelle && !v.includes(actuelle)) v.push(actuelle); // valeur ancienne gardée telle quelle
+  $(id).innerHTML = '<option value="">—</option>' + v.map(x => `<option>${echap(x)}</option>`).join('');
+  $(id).value = actuelle || '';
+}
+function tagsConnus() { // formes affichées, de la plus fréquente à la moins fréquente
+  const n = {}; LIEUX.forEach(l => l._tags.forEach(t => { const f = Object.keys(TAG_FORME).find(k => TAG_FORME[k] === norm(t)) || t;
+    n[f] = (n[f] || 0) + 1; }));
+  return Object.keys(n).sort((a, b) => n[b] - n[a] || a.localeCompare(b, 'fr'));
+}
+document.addEventListener('click', e => { // bouton Modifier des fiches (carte et liste)
+  const b = e.target.closest('[data-modifier]'); if (!b) return;
+  e.stopPropagation(); ouvrirEdition(b.dataset.modifier);
+}, true);
+function ouvrirEdition(id) {
+  const l = LIEUX.find(x => x.id === id); if (!l) return;
+  if (!LISTES) { toast('Listes pas encore chargées, réessaie dans un instant'); return; }
+  remplirEdition(l, false);
+}
+/** Remplit et ouvre le formulaire, pour un lieu existant (nouveau = false) ou un brouillon d'ajout (nouveau = true). */
+function remplirEdition(l, nouveau) {
+  EDIT = { l, nouveau, statut: l.statut || 'À tester', note: l.note ?? null, tags: l._tags.slice(), c2: !!l.cuisine2, connus: tagsConnus() };
+  if (carte) carte.closePopup(); ouvrir(false);
+  $('e-titre').textContent = (nouveau ? 'Nouveau : ' : '') + l.nom;
+  $('e-adresse').textContent = nouveau ? (l.adresse || 'Sans adresse (le lieu sera marqué « à vérifier »)') : '';
+  remplirSelect('e-type', LISTES.types, l.type);
+  remplirSelect('e-cuisine', LISTES.cuisines, l.cuisine);
+  remplirSelect('e-cuisine2', LISTES.cuisines, l.cuisine2);
+  $('e-commander').checked = !!l.a_commander; $('e-commentaire').value = l.commentaire || '';
+  $('e-tag').value = ''; $('e-erreur').style.display = 'none'; $('e-enregistrer').disabled = false;
+  if (!nouveau) $('e-gemini').textContent = '';
+  rendreEdition();
+  $('edition').classList.add('ouvert'); $('edition').scrollTop = 0;
+}
+function rendreEdition() {
+  const el = $('e-statut'); el.innerHTML = '';
+  LISTES.statuts.forEach(s => { const b = document.createElement('button'); b.type = 'button'; b.className = 'puce';
+    b.textContent = s; b.setAttribute('aria-pressed', EDIT.statut === s);
+    b.onclick = () => { EDIT.statut = s; rendreEdition(); }; el.appendChild(b); });
+  $('e-bloc-note').style.display = EDIT.statut === 'À tester' ? 'none' : ''; // note seulement si Testé ou Déçu
+  const et = $('e-etoiles'); et.innerHTML = '';
+  for (let k = 1; k <= 5; k++) { const b = document.createElement('button'); b.type = 'button'; b.textContent = '★';
+    b.setAttribute('aria-label', k + ' sur 5');
+    b.className = EDIT.note >= k ? 'plein' : EDIT.note >= k - .5 ? 'demi' : '';
+    b.onclick = () => { EDIT.note = EDIT.note === k ? k - .5 : k; rendreEdition(); }; // 2e toucher : demi-étoile
+    et.appendChild(b); }
+  $('e-note-txt').textContent = EDIT.note == null ? 'pas de note' : String(EDIT.note).replace('.', ',') + '/5';
+  $('e-plus-c2').style.display = EDIT.c2 ? 'none' : ''; $('e-bloc-c2').style.display = EDIT.c2 ? '' : 'none';
+  const tg = $('e-tags'); tg.innerHTML = '';
+  // tags posés seulement (pas de suggestion automatique : elles viendront de Gemini à l'ajout d'un lieu)
+  if (!EDIT.tags.length) tg.innerHTML = '<span class="sous">Aucun tag</span>';
+  EDIT.tags.forEach(t => { const b = document.createElement('button'); b.type = 'button'; b.className = 'puce';
+    b.setAttribute('aria-pressed', true); b.setAttribute('aria-label', 'Retirer ' + t);
+    b.innerHTML = echap(t) + '<span class="x">×</span>';
+    b.onclick = () => { EDIT.tags = EDIT.tags.filter(x => x !== t); rendreEdition(); };
+    tg.appendChild(b); });
+  rendreRechercheTag();
+}
+/** Sous le champ de tag : mes tags qui contiennent ce qui est tapé, et « + Créer » s'il n'existe pas encore. */
+function rendreRechercheTag() {
+  const q = $('e-tag').value.replace(/,/g, ' ').trim(), el = $('e-tag-res'); el.innerHTML = '';
+  if (!q) return;
+  const libres = EDIT.connus.filter(t => !EDIT.tags.some(x => norm(x) === norm(t)) && norm(t).includes(norm(q)))
+    .sort((a, b) => (norm(b).startsWith(norm(q)) - norm(a).startsWith(norm(q))) || a.localeCompare(b, 'fr')).slice(0, 15);
+  libres.forEach(t => { const b = document.createElement('button'); b.type = 'button'; b.className = 'puce';
+    b.textContent = t; b.onclick = () => ajouterTag(t); el.appendChild(b); });
+  if (!EDIT.connus.some(t => norm(t) === norm(q)) && !EDIT.tags.some(t => norm(t) === norm(q))) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'puce';
+    b.textContent = '+ Créer « ' + q + ' »'; b.onclick = () => ajouterTag(q); el.appendChild(b); }
+}
+function ajouterTag(brut) {
+  brut = String(brut ?? $('e-tag').value).replace(/,/g, ' ').trim(); if (!brut) return;
+  const t = EDIT.connus.find(x => norm(x) === norm(brut)) || brut; // reprend l'orthographe existante (Ramen, pas ramen)
+  if (!EDIT.tags.some(x => norm(x) === norm(t))) EDIT.tags.push(t);
+  $('e-tag').value = ''; rendreEdition(); $('e-tag').focus();
+}
+$('e-tag').oninput = rendreRechercheTag;
+$('e-tag').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ajouterTag(); } };
+$('e-sans-note').onclick = () => { EDIT.note = null; rendreEdition(); };
+$('e-plus-c2').onclick = () => { EDIT.c2 = true; rendreEdition(); $('e-cuisine2').focus(); };
+const fermerEdition = () => { $('edition').classList.remove('ouvert'); EDIT = null; };
+$('e-fermer').onclick = fermerEdition; $('e-annuler').onclick = fermerEdition;
+$('e-form').onsubmit = e => {
+  e.preventDefault(); if (!EDIT) return;
+  if ($('e-tag').value.trim()) ajouterTag(); // tag tapé mais pas encore ajouté
+  if (EDIT.nouveau) return enregistrerAjout(false);
+  const l = EDIT.l;
+  const nouveau = { statut: EDIT.statut, note: EDIT.note, type: $('e-type').value, cuisine: $('e-cuisine').value,
+    cuisine2: EDIT.c2 ? $('e-cuisine2').value : '', a_commander: $('e-commander').checked,
+    commentaire: $('e-commentaire').value.trim(), tags: EDIT.tags.join(', ') };
+  const avant = {}, apres = {};
+  Object.keys(nouveau).forEach(k => {
+    const ancien = k === 'tags' ? l._tags.join(', ') : l[k] ?? (k === 'note' ? null : '');
+    if (JSON.stringify(nouveau[k]) !== JSON.stringify(ancien)) { avant[k] = l[k]; apres[k] = nouveau[k]; }
+  });
+  if (!Object.keys(apres).length) { fermerEdition(); toast('Aucun changement'); return; }
+  $('e-enregistrer').disabled = true; $('e-erreur').style.display = 'none';
+  appel('modifierLieu', l.id, avant, apres).then(maj => {
+    const i = LIEUX.findIndex(x => x.id === l.id); if (i >= 0) LIEUX[i] = prep(maj);
+    fermerEdition(); construireFiltres(); afficher(); toast('Enregistré dans le Sheet');
+  }).catch(err => {
+    $('e-erreur').textContent = 'Pas enregistré : ' + (err && err.message || err); $('e-erreur').style.display = 'block';
+    $('e-enregistrer').disabled = false;
+  });
+};
+
+// ---------------------------------------------------------------- Ajouter un lieu (A4b)
+// OpenStreetMap est interrogé par la page (Nominatim refuse les serveurs de Google) ; Gemini propose type, cuisine et tags.
+const TYPE_OSM = { restaurant: 'Restaurant', fast_food: 'Restaurant', food_court: 'Restaurant', cafe: 'Café', bar: 'Bar',
+  pub: 'Bar', biergarten: 'Bar', ice_cream: 'Café', bakery: 'Boulangerie-Pâtisserie', pastry: 'Boulangerie-Pâtisserie',
+  confectionery: 'Boulangerie-Pâtisserie', cheese: 'Fromagerie', deli: 'Commerce de bouche', butcher: 'Commerce de bouche',
+  coffee: 'Café', chocolate: 'Commerce de bouche', wine: 'Commerce de bouche', beverages: 'Commerce de bouche', alcohol: 'Commerce de bouche' };
+const motsNom = s => norm(s).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+  .filter(m => m && !/^(le|la|les|l|restaurant|resto|lyon|bar|cafe|chez|the|de|du|des|et|d)$/.test(m));
+function ressemblance(a, b) { // mots distinctifs en commun, de 0 à 1
+  const x = motsNom(a), y = motsNom(b); if (!x.length || !y.length) return 0;
+  return 2 * x.filter(m => y.includes(m)).length / (x.length + y.length);
+}
+const horairesFr = s => !s ? '' : s.trim() === '24/7' ? 'ouvert 24 h/24, 7 j/7' : s
+  .replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su)\b/g, m => ({ Mo: 'lun', Tu: 'mar', We: 'mer', Th: 'jeu', Fr: 'ven', Sa: 'sam', Su: 'dim' })[m])
+  .replace(/\bPH\b/g, 'fériés').replace(/\b(off|closed)\b/g, 'fermé').replace(/(\d\d:\d\d)-(\d\d:\d\d)/g, '$1–$2')
+  .replace(/,/g, ', ').replace(/;/g, ' ·').replace(/\s+/g, ' ').trim();
+let AJOUT = null; // { nom, candidats, choix }
+function ouvrirAjout() {
+  if (!LISTES) { toast('Listes pas encore chargées, réessaie dans un instant'); return; }
+  ouvrir(false); fermerEdition(); if (carte) carte.closePopup();
+  AJOUT = null; $('a-nom').value = ''; $('a-precision').value = '';
+  ['a-doublons', 'a-resultats', 'a-erreur'].forEach(id => { $(id).innerHTML = ''; });
+  $('ajout').classList.add('ouvert'); $('a-nom').focus();
+}
+const fermerAjout = () => $('ajout').classList.remove('ouvert');
+$('btnAjouter').onclick = ouvrirAjout; $('a-fermer').onclick = fermerAjout;
+/** Lieux déjà dans la liste dont le nom ressemble. */
+function doublonsPossibles(nom) {
+  return LIEUX.map(l => ({ l, r: norm(l.nom) === norm(nom) ? 1 : ressemblance(nom, l.nom) })).filter(x => x.r >= 0.6)
+    .sort((a, b) => b.r - a.r).slice(0, 3).map(x => x.l);
+}
+async function chercherOSM(nom, precision) {
+  const params = new URLSearchParams({ q: nom + (precision ? ', ' + precision : ''), format: 'jsonv2', limit: 8, addressdetails: 1,
+    extratags: 1, namedetails: 1, viewbox: '4.70,45.85,5.02,45.68', bounded: 1, countrycodes: 'fr', 'accept-language': 'fr' });
+  const rep = await fetch('https://nominatim.openstreetmap.org/search?' + params);
+  if (!rep.ok) throw new Error('OpenStreetMap indisponible (HTTP ' + rep.status + ')');
+  return (await rep.json()).map(r => {
+    const a = r.address || {}, x = r.extratags || {}, nomOsm = (r.namedetails || {}).name || r.name || '';
+    const rue = [a.house_number, a.road || a.pedestrian || a.square].filter(Boolean).join(' ');
+    const ville = a.city || a.town || a.village || a.municipality || '';
+    return { nom_osm: nomOsm, ressemblance: ressemblance(nom, nomOsm), categorie: r.category + '/' + r.type,
+      alimentaire: !!TYPE_OSM[r.type] && (r.category === 'amenity' || r.category === 'shop'), type: TYPE_OSM[r.type] || '',
+      cuisine_osm: x.cuisine || '', adresse: [rue, [a.postcode, ville].filter(Boolean).join(' ')].filter(Boolean).join(', '),
+      ville, lat: +r.lat, lng: +r.lon, horaires_osm: x.opening_hours || '' };
+  }).sort((a, b) => (b.alimentaire - a.alimentaire) || (b.ressemblance - a.ressemblance))
+    .filter(c => c.alimentaire || c.ressemblance >= 0.5).slice(0, 3);
+}
+$('a-form').onsubmit = async e => {
+  e.preventDefault();
+  const nom = $('a-nom').value.trim(); if (!nom) { $('a-nom').focus(); return; }
+  document.activeElement.blur(); // ferme le clavier du téléphone pour laisser voir les résultats
+  $('a-erreur').textContent = ''; $('a-resultats').innerHTML = '<p class="sous">Recherche dans OpenStreetMap…</p>';
+  const dbl = doublonsPossibles(nom);
+  $('a-doublons').innerHTML = dbl.length ? '<div class="doublon"><strong>Déjà dans ta liste ?</strong>' + dbl.map(l =>
+    `<p>${echap(l.nom)} <span class="sous">${echap(l.adresse || 'sans adresse')}</span><br>` +
+    `<button class="lien" type="button" data-ouvrir="${echap(l.id)}">Ouvrir sa fiche</button></p>`).join('') + '</div>' : '';
+  let cands = [];
+  try { cands = await chercherOSM(nom, $('a-precision').value.trim()); }
+  catch (err) { $('a-erreur').textContent = err.message + ' : tu peux continuer sans adresse.'; }
+  AJOUT = { nom, candidats: cands, choix: -1 };
+  rendreCandidats();
+};
+// Un toucher sur un candidat (ou sur « Aucun de ceux-là ») passe directement au formulaire.
+function rendreCandidats() {
+  const el = $('a-resultats');
+  el.innerHTML = '<span class="champ">' + (AJOUT.candidats.length ? 'Touche le bon lieu' : 'Rien trouvé dans OpenStreetMap') + '</span>' +
+    AJOUT.candidats.map((c, i) => `<button type="button" class="candidat" data-cand="${i}">` +
+      `<strong>${echap(c.nom_osm || AJOUT.nom)}</strong><br><span class="sous">${echap(c.adresse || 'adresse inconnue')}` +
+      `${c.type ? ' · ' + echap(c.type) : ''}${c.horaires_osm ? ' · horaires connus' : ''}</span></button>`).join('') +
+    `<button type="button" class="candidat" data-cand="-1"><strong>Aucun de ceux-là</strong>` +
+    `<br><span class="sous">enregistrer sans adresse (à compléter plus tard)</span></button>`;
+  el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+$('ajout').addEventListener('click', e => {
+  const o = e.target.closest('[data-ouvrir]');
+  if (o) { fermerAjout(); ouvrirEdition(o.dataset.ouvrir); return; }
+  const c = e.target.closest('[data-cand]');
+  if (c) { AJOUT.choix = +c.dataset.cand; continuerAjout(); }
+});
+function continuerAjout() {
+  const c = AJOUT.choix >= 0 ? AJOUT.candidats[AJOUT.choix] : null;
+  const brouillon = prep({ id: '', nom: AJOUT.nom, type: c ? c.type : '', cuisine: '', cuisine2: '', statut: 'À tester', note: null,
+    tags: '', a_commander: false, commentaire: '', adresse: c ? c.adresse : '', ville: c ? c.ville : '', lat: c ? c.lat : null,
+    lng: c ? c.lng : null, horaires_osm: c ? c.horaires_osm : '', horaires: c ? horairesFr(c.horaires_osm) : '' });
+  fermerAjout(); remplirEdition(brouillon, true);
+  $('e-gemini').textContent = 'Gemini cherche le type, la cuisine et des tags…';
+  appel('suggererPourLieu', { nom: AJOUT.nom, adresse: brouillon.adresse, categorie: c ? c.categorie : '', cuisine_osm: c ? c.cuisine_osm : '' })
+    .then(s => {
+      if (!EDIT || EDIT.l !== brouillon) return; // formulaire fermé ou changé entre-temps
+      if (s.erreur) { $('e-gemini').textContent = 'Pas de suggestion (' + s.erreur + ') : remplis à la main.'; return; }
+      if (s.type && !$('e-type').value) $('e-type').value = s.type;
+      if (s.cuisine && !$('e-cuisine').value) $('e-cuisine').value = s.cuisine;
+      if (s.cuisine2) { EDIT.c2 = true; $('e-cuisine2').value = s.cuisine2; }
+      s.tags.forEach(t => { if (!EDIT.tags.some(x => norm(x) === norm(t))) EDIT.tags.push(t); });
+      rendreEdition();
+      $('e-gemini').textContent = 'Suggestions de Gemini (confiance ' + s.confiance + ') : vérifie et modifie si besoin.';
+    }).catch(err => { if (EDIT && EDIT.l === brouillon) $('e-gemini').textContent = 'Pas de suggestion : ' + (err.message || err); });
+}
+function enregistrerAjout(memeNomAccepte) {
+  const l = EDIT.l, d = { nom: l.nom, statut: EDIT.statut, note: EDIT.statut === 'À tester' ? null : EDIT.note, type: $('e-type').value,
+    cuisine: $('e-cuisine').value, cuisine2: EDIT.c2 ? $('e-cuisine2').value : '', tags: EDIT.tags.join(', '),
+    a_commander: $('e-commander').checked, commentaire: $('e-commentaire').value.trim(), adresse: l.adresse, ville: l.ville };
+  if (l.lat != null) Object.assign(d, { lat: l.lat, lng: l.lng });
+  if (l.horaires_osm) d.horaires_osm = l.horaires_osm;
+  $('e-enregistrer').disabled = true; $('e-erreur').style.display = 'none';
+  appel('ajouterLieu', d, memeNomAccepte).then(nv => {
+    LIEUX.push(prep(nv)); fermerEdition(); construireFiltres(); afficher(); toast('Ajouté dans le Sheet : ' + nv.nom);
+    if (nv.lat != null && MARQUEURS[nv.id]) voirSurCarte(nv.id);
+  }).catch(err => {
+    const m = String(err && err.message || err);
+    $('e-erreur').innerHTML = 'Pas enregistré : ' + echap(m) + (/DOUBLON/.test(m)
+      ? '<br><button type="button" class="btn-second" id="e-meme-nom">C\'est une autre adresse : ajouter quand même</button>' : '');
+    $('e-erreur').style.display = 'block'; $('e-enregistrer').disabled = false;
+    const b = $('e-meme-nom'); if (b) b.onclick = () => enregistrerAjout(true);
+  });
+}
+
+function ouvrir(o) { document.getElementById('panneau').classList.toggle('ouvert', o);
+                     document.getElementById('btnFiltres').setAttribute('aria-expanded', o); }
+document.getElementById('btnFiltres').onclick = () => ouvrir(!document.getElementById('panneau').classList.contains('ouvert'));
+document.getElementById('btnFermer').onclick = () => ouvrir(false);
+document.getElementById('btnRaz').onclick = () => {
+  choix.statut = new Set(['Testé', 'À tester']); ['type', 'cuisine', 'tags'].forEach(k => choix[k].clear());
+  document.getElementById('f-note').value = '0'; document.getElementById('f-commander').checked = false;
+  construireFiltres(); afficher();
+};
+document.getElementById('f-note').onchange = () => afficher();
+document.getElementById('f-commander').onchange = () => afficher();
+document.getElementById('recherche').oninput = () => afficher();
+
+function demarrerEtVue(lieux) {
+  demarrer(lieux); let v = 'carte'; try { v = localStorage.getItem('mapstr-vue') || 'carte'; } catch (e) {}
+  vue(v === 'liste' ? 'liste' : 'carte');
+}
+function erreur(e) { const el = document.getElementById('erreur'); el.textContent = 'Erreur : ' + (e && e.message || e);
+                     el.style.display = 'block'; document.getElementById('compteur').textContent = ''; }
+appel('lieuxPourCarte').then(demarrerEtVue).catch(erreur);
+appel('listesPourCarte').then(l => { LISTES = l; }).catch(erreur);
+</script>
+</body>
+</html>
