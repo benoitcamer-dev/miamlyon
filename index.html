@@ -67,10 +67,9 @@
   .doublon { background: #fff8e1; border-radius: 10px; padding: 8px 10px; margin-top: 10px; }
   #e-adresse { color: var(--doux); font-size: 14px; margin: 2px 0 0; }
   #e-gemini { font-size: 13px; color: var(--doux); margin: 8px 0 0; }
-  .pin span { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%;
-              border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); font-size: 16px; line-height: 1; }
+  .pin svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); }
   .leg { display: inline-block; margin: 0 12px 6px 0; font-size: 14px; white-space: nowrap; }
-  .leg i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .leg svg { vertical-align: middle; margin-right: 6px; }
   .pastille { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
   .lieu .detail { display: none; border-top: 1px solid #ececf0; margin-top: 8px; padding-top: 4px; }
   .lieu.deplie .detail { display: block; }
@@ -307,13 +306,45 @@ function garde(l) {
   return true;
 }
 
-/** R19 : pastille ronde à la couleur du statut, avec le pictogramme du type. */
-const PICTOS = { 'Restaurant': '🍴', 'Bar': '🍸', 'Café': '☕', 'Boulangerie-Pâtisserie': '🥐', 'Commerce de bouche': '🛒', 'Fromagerie': '🧀' };
-const icone = l => L.divIcon({ className: 'pin', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -15],
-  html: `<span style="background:${COULEURS[l.statut] || '#444'}">${PICTOS[l.type] || '•'}</span>` });
+/** R19 : fond coloré par type + pictogramme dessiné ; le statut passe par la forme (coche / pointillé / croix), jamais par la couleur seule. */
+const TYPES = {
+  'Restaurant':             { fond: '#E69F00', clair: true },
+  'Bar':                    { fond: '#4B2E83', clair: false },
+  'Café':                   { fond: '#7A4A22', clair: false },
+  'Boulangerie-Pâtisserie': { fond: '#F5E663', clair: true },
+  'Commerce de bouche':     { fond: '#00805E', clair: false },
+  'Fromagerie':             { fond: '#7CC4F0', clair: true }
+};
+// Pictogrammes sur grille 24x24 : c = couleur du dessin, f = couleur du fond (détails en creux).
+const DESSINS = {
+  'Restaurant': (c, f) => `<path fill="${c}" d="M5 3h1.4v5.5h1.2V3H9v5.5h1.2V3h1.4v6.5a2.6 2.6 0 0 1-2.2 2.6V21H7.4v-8.9A2.6 2.6 0 0 1 5 9.5z"/><path fill="${c}" d="M16.2 3c-2.2 1.6-3.2 4.6-3.2 8.2h3.2V21H18V3z"/>`,
+  'Bar': (c, f) => `<path fill="${c}" d="M3.5 4h17L12 13.6z"/><rect fill="${c}" x="11.1" y="13" width="1.8" height="7.2"/><rect fill="${c}" x="7" y="19.8" width="10" height="1.8" rx=".9"/><circle fill="${f}" cx="15.6" cy="6.6" r="1.5"/><path stroke="${f}" stroke-width="1.1" stroke-linecap="round" d="M15.6 6.6L18.6 2.6"/>`,
+  'Café': (c, f) => `<path fill="${c}" d="M3.5 9.5h13.5v4.5a5.2 5.2 0 0 1-5.2 5.2H8.7A5.2 5.2 0 0 1 3.5 14z"/><path fill="none" stroke="${c}" stroke-width="1.9" d="M17 10.8h1.4a2.6 2.6 0 0 1 0 5.2H16.4"/><rect fill="${c}" x="2.5" y="20.2" width="16" height="1.7" rx=".85"/><path fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" d="M7.6 3.2c-1.1 1.1 1.1 2.1 0 3.4M11.6 3.2c-1.1 1.1 1.1 2.1 0 3.4"/>`,
+  'Boulangerie-Pâtisserie': (c, f) => `<g fill="${c}" stroke="${f}" stroke-width="1.1"><ellipse cx="3.6" cy="17.6" rx="2.9" ry="1.8" transform="rotate(-55 3.6 17.6)"/><ellipse cx="20.4" cy="17.6" rx="2.9" ry="1.8" transform="rotate(55 20.4 17.6)"/><ellipse cx="7" cy="13.8" rx="3.3" ry="5" transform="rotate(32 7 13.8)"/><ellipse cx="17" cy="13.8" rx="3.3" ry="5" transform="rotate(-32 17 13.8)"/><ellipse cx="12" cy="11.2" rx="3.6" ry="5.6"/></g>`,
+  'Commerce de bouche': (c, f) => `<path fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" d="M7.4 10.2L11 4M16.6 10.2L13 4"/><path fill="${c}" d="M2.5 10h19l-2.1 10.5H4.6z"/><path stroke="${f}" stroke-width="1.5" stroke-linecap="round" d="M8.8 13v4.4M12 13v4.4M15.2 13v4.4"/>`,
+  'Fromagerie': (c, f) => `<path fill="${c}" d="M2.5 19.5v-9.6L21.5 5v14.5z"/><circle fill="${f}" cx="8" cy="14.6" r="1.7"/><circle fill="${f}" cx="14" cy="12" r="1.4"/><circle fill="${f}" cx="17.4" cy="16.2" r="1.9"/><circle fill="${f}" cx="11.4" cy="17.2" r="1"/>`
+};
+const TYPE_PAR_DEFAUT = { fond: '#666', clair: false };
+const glyphe = (type, x, y, k) => { const t = TYPES[type] || TYPE_PAR_DEFAUT, d = DESSINS[type];
+  return d ? `<g transform="translate(${x} ${y}) scale(${k})">${d(t.clair ? '#111' : '#fff', t.fond)}</g>` : ''; };
+/** Marqueur SVG 34x34 (disque centré en 16,19) : contour plein + coche = Testé, pointillé = À tester, grisé + croix = Déçu. */
+function marqueur(type, statut, taille) {
+  const t = TYPES[type] || TYPE_PAR_DEFAUT, decu = statut === 'Déçu';
+  const contour = statut === 'À tester' ? 'stroke="#222" stroke-width="2.5" stroke-dasharray="4 3"' : 'stroke="#fff" stroke-width="2.5"';
+  const badge = statut === 'Testé'
+    ? '<circle cx="28" cy="7" r="7" fill="#fff" stroke="#222" stroke-width="1.2"/><path d="M24.5 7.2l2.6 2.6 4.4-5" fill="none" stroke="#1b6e2d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'
+    : decu ? '<circle cx="28" cy="7" r="7" fill="#fff" stroke="#222" stroke-width="1.2"/><path d="M24.8 3.8l6.4 6.4M31.2 3.8l-6.4 6.4" stroke="#b00020" stroke-width="2.2" stroke-linecap="round"/>' : '';
+  return `<svg viewBox="0 0 34 34" width="${taille}" height="${taille}"><g opacity="${decu ? .5 : 1}"><circle cx="16" cy="19" r="15" fill="${t.fond}" ${contour}/>${glyphe(type, 3.4, 6.4, 1.05)}</g>${badge}</svg>`;
+}
+const icone = l => L.divIcon({ className: 'pin', iconSize: [36, 36], iconAnchor: [17, 20], popupAnchor: [0, -20],
+  html: marqueur(l.type, l.statut, 36) });
 function legende() {
-  document.getElementById('f-legende').innerHTML = Object.entries(PICTOS).map(([t, p]) => `<span class="leg">${p} ${echap(t)}</span>`).join('') +
-    Object.entries(COULEURS).map(([s, c]) => `<span class="leg"><i style="background:${c}"></i>${echap(s)}</span>`).join('');
+  const pastille = ty => { const t = TYPES[ty];
+    return `<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="${t.fond}"/>${glyphe(ty, 3.4, 3.4, 0.72)}</svg>`; };
+  const libelle = { 'Testé': 'Testé (coche)', 'À tester': 'À tester (pointillé)', 'Déçu': 'Déçu (croix, grisé)' };
+  document.getElementById('f-legende').innerHTML =
+    Object.keys(TYPES).map(t => `<span class="leg">${pastille(t)}${echap(t)}</span>`).join('') + '<br>' +
+    STATUTS.map(s => `<span class="leg">${marqueur('Restaurant', s, 28)}${libelle[s]}</span>`).join('');
 }
 
 function fiche(l) {
