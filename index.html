@@ -172,7 +172,12 @@
   <fieldset><legend>À commander</legend>
     <label class="case"><input type="checkbox" id="f-commander"> Seulement les lieux « à commander »</label></fieldset>
   <fieldset><legend>Horaires</legend>
-    <label class="case"><input type="checkbox" id="f-ouvert"> Ouvert maintenant <span class="sous">(lieux sans horaires exclus)</span></label></fieldset>
+    <label class="case"><input type="checkbox" id="f-ouvert"> Ouvert maintenant <span class="sous">(lieux sans horaires exclus)</span></label>
+    <div class="case" style="margin-top: 8px">Ou ouvert le
+      <select id="f-jour"><option value="">(pas de jour)</option><option value="0">lundi</option><option value="1">mardi</option>
+        <option value="2">mercredi</option><option value="3">jeudi</option><option value="4">vendredi</option>
+        <option value="5">samedi</option><option value="6">dimanche</option></select>
+      à <input type="time" id="f-heure" value="19:00"></div></fieldset>
   <fieldset><legend>Cuisine et tags</legend>
     <div class="puces mode" role="group" aria-label="Combinaison des choix" style="margin-bottom: 10px">
       <button type="button" class="puce" id="m-un" aria-pressed="true">Au moins un</button>
@@ -351,25 +356,31 @@ function parserHoraires(s) { // -> { h: [7 listes de [debut, fin] en minutes dep
   }
   return vu ? { h } : null;
 }
-function estOuvert(s, date) { // date : Date ; heure de Paris
-  const p = parserHoraires(s); if (!p) return null;
-  const f = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-    .formatToParts(date || new Date()), g = t => f.find(x => x.type === t).value;
-  const j = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'].indexOf(g('weekday'));
-  const m = +g('hour') * 60 + +g('minute');
-  if (j < 0) return null;
+function estOuvertA(s, j, m) { // j : 0 = lundi … 6 = dimanche ; m : minutes depuis minuit
+  const p = parserHoraires(s); if (!p || j < 0) return null;
   for (const [d, e] of p.h[j]) if (m >= d && m < e) return true;
   for (const [d, e] of p.h[(j + 6) % 7]) if (e > 1440 && m < e - 1440) return true; // plage de la veille qui déborde après minuit
   return false;
 }
-const badgeOuvert = l => { const o = estOuvert(l.horaires_osm); return o === null ? '' : o ? '<span class="ouv">Ouvert</span>' : '<span class="ferme">Fermé</span>'; };
+function estOuvert(s, date) { // date : Date ; heure de Paris
+  const f = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(date || new Date()), g = t => f.find(x => x.type === t).value;
+  return estOuvertA(s, ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'].indexOf(g('weekday')), +g('hour') * 60 + +g('minute'));
+}
+/** Moment choisi dans le filtre « Ouvert le… à… » : { j, m } ou null (alors « maintenant »). */
+function momentChoisi() {
+  const j = document.getElementById('f-jour').value, h = /^(\d{1,2}):(\d\d)$/.exec(document.getElementById('f-heure').value);
+  return j === '' || !h ? null : { j: +j, m: +h[1] * 60 + +h[2] };
+}
+const ouvertAuMoment = l => { const q = momentChoisi(); return q ? estOuvertA(l.horaires_osm, q.j, q.m) : estOuvert(l.horaires_osm); };
+const badgeOuvert = l => { const o = ouvertAuMoment(l); return o === null ? '' : o ? '<span class="ouv">Ouvert</span>' : '<span class="ferme">Fermé</span>'; };
 
 function garde(l) {
   if (choix.statut.size && !choix.statut.has(l.statut)) return false;
   if (choix.type.size && !choix.type.has(l.type)) return false;
   const nmin = +document.getElementById('f-note').value; if (nmin && !(l.note >= nmin)) return false;
   if (document.getElementById('f-commander').checked && !l.a_commander) return false;
-  if (document.getElementById('f-ouvert').checked && estOuvert(l.horaires_osm) !== true) return false;
+  if ((document.getElementById('f-ouvert').checked || momentChoisi()) && ouvertAuMoment(l) !== true) return false;
   if (choix.tags.size) { const ks = [...choix.tags].map(t => TAG_FORME[t]), a = k => l._etiqN.includes(k);
     if (!(MODE.tous ? ks.every(a) : ks.some(a))) return false; }
   const q = norm(document.getElementById('recherche').value); if (q && !l._texte.includes(q)) return false;
@@ -444,7 +455,7 @@ function afficher(cadrer) {
   document.getElementById('compteur').textContent = places.length + ' lieu' + (places.length > 1 ? 'x' : '') +
     ' sur la carte' + (sans ? ' · ' + sans + ' sans position' : '');
   const actifs = choix.type.size + choix.cuisine.size + choix.tags.size + (+document.getElementById('f-note').value ? 1 : 0)
-    + (document.getElementById('f-commander').checked ? 1 : 0) + (document.getElementById('f-ouvert').checked ? 1 : 0) + (choix.statut.size === 2 && !choix.statut.has('Déçu') ? 0 : 1);
+    + (document.getElementById('f-commander').checked ? 1 : 0) + (document.getElementById('f-ouvert').checked || momentChoisi() ? 1 : 0) + (choix.statut.size === 2 && !choix.statut.has('Déçu') ? 0 : 1);
   const btn = document.getElementById('btnFiltres');
   btn.textContent = actifs ? 'Filtres (' + actifs + ')' : 'Filtres'; btn.classList.toggle('actif', !!actifs);
   if (cadrer && places.length) carte.fitBounds(L.latLngBounds(places.map(l => [l.lat, l.lng])), { padding: [40, 40], maxZoom: 16 });
@@ -812,11 +823,14 @@ document.getElementById('btnRaz').onclick = () => {
   choix.statut = new Set(['Testé', 'À tester']); ['type', 'cuisine', 'tags'].forEach(k => choix[k].clear());
   document.getElementById('f-note').value = '0'; document.getElementById('f-commander').checked = false;
   document.getElementById('f-ouvert').checked = false;
+  document.getElementById('f-jour').value = ''; document.getElementById('f-heure').value = '19:00';
   construireFiltres(); afficher();
 };
 document.getElementById('f-note').onchange = () => afficher();
 document.getElementById('f-commander').onchange = () => afficher();
-document.getElementById('f-ouvert').onchange = () => afficher();
+document.getElementById('f-ouvert').onchange = () => { if (document.getElementById('f-ouvert').checked) document.getElementById('f-jour').value = ''; afficher(); };
+document.getElementById('f-jour').onchange = () => { if (momentChoisi()) document.getElementById('f-ouvert').checked = false; afficher(); };
+document.getElementById('f-heure').onchange = () => afficher();
 document.getElementById('recherche').oninput = () => afficher();
 
 function demarrerEtVue(lieux) {
