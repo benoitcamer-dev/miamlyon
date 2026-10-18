@@ -47,6 +47,8 @@
   .lieu .nom { font-weight: 600; }
   .lieu .note { white-space: nowrap; font-size: 13px; }
   .lieu .sous { color: var(--doux); font-size: 13px; }
+  .ouv, .ferme { display: inline-block; font-size: 12px; font-weight: 600; padding: 0 7px; margin-right: 4px; border-radius: 999px; border: 1px solid currentColor; }
+  .ouv { color: #1b6e2d; } .ferme { color: #b00020; }
   .statut { display: inline-block; font-size: 12px; font-weight: 600; color: #fff; padding: 1px 8px; border-radius: 999px;
             margin-right: 6px; vertical-align: 1px; }
   #btnAjouter { position: absolute; z-index: 1000; right: 16px; bottom: 96px; width: 52px; height: 52px; border-radius: 50%;
@@ -169,6 +171,8 @@
   </fieldset>
   <fieldset><legend>À commander</legend>
     <label class="case"><input type="checkbox" id="f-commander"> Seulement les lieux « à commander »</label></fieldset>
+  <fieldset><legend>Horaires</legend>
+    <label class="case"><input type="checkbox" id="f-ouvert"> Ouvert maintenant <span class="sous">(lieux sans horaires exclus)</span></label></fieldset>
   <fieldset><legend>Cuisine et tags</legend>
     <div class="puces mode" role="group" aria-label="Combinaison des choix" style="margin-bottom: 10px">
       <button type="button" class="puce" id="m-un" aria-pressed="true">Au moins un</button>
@@ -295,11 +299,77 @@ function reglerMode(tous) { MODE.tous = tous; document.getElementById('m-tous').
   document.getElementById('m-un').setAttribute('aria-pressed', !tous); afficher(); }
 document.getElementById('m-un').onclick = () => reglerMode(false); document.getElementById('m-tous').onclick = () => reglerMode(true);
 
+// ---- A3 : ouvert maintenant (copie de scripts/ouvert.js, testée par scripts/test_ouvert.js)
+// A3 : évalue une chaîne opening_hours simple (sous-ensemble produit par Mapstr/OSM) -> true | false | null (inconnu).
+// Même code que dans Carte.html (bloc « A3 »). Test : node scripts/test_ouvert.js
+const JOURS_OH = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+function parserHoraires(s) { // -> { h: [7 listes de [debut, fin] en minutes depuis lundi 0 h] } ou null
+  s = String(s || '').replace(/^'/, '').trim();
+  if (!s) return null;
+  if (s === '24/7') return { h: JOURS_OH.map(() => [[0, 1440]]) };
+  const J = '(?:Mo|Tu|We|Th|Fr|Sa|Su)';
+  const dejours = '(' + J + '(?:-' + J + ')?(?:,' + J + '(?:-' + J + ')?)*)';
+  const h = JOURS_OH.map(() => []);
+  let vu = false;
+  for (let regle of s.split(';')) {
+    regle = regle.replace(/,\s*PH\b/g, '').replace(/\bPH\s*,/g, ''); // jours fériés ignorés (inconnus)
+    // un « , » suivi d'un jour ajoute une règle (cumul) ; sinon la règle remplace les jours visés
+    const parts = regle.trim().split(/,\s*(?=(?:Mo|Tu|We|Th|Fr|Sa|Su)\b)/);
+    // « Mo,We-Sa 11:30 » : la 1re coupure ci-dessus ne doit pas séparer une liste de jours
+    const morceaux = []; let cur = '';
+    for (const p of parts) {
+      cur = cur ? cur + ',' + p : p;
+      if (/\d/.test(cur)) { morceaux.push(cur); cur = ''; }
+    }
+    if (cur) morceaux.push(cur);
+    morceaux.forEach((m, i) => {
+      m = m.replace(/\bPH\b,?/g, '').replace(/,\s*$/, '').trim();
+      const r = new RegExp('^(?:' + dejours + ')?\\s*(.*)$').exec(m);
+      if (!r) return;
+      const jours = r[1] ? [] : [0, 1, 2, 3, 4, 5, 6];
+      if (r[1]) for (const seg of r[1].split(',')) {
+        const [a, b] = seg.split('-'), ia = JOURS_OH.indexOf(a), ib = b ? JOURS_OH.indexOf(b) : ia;
+        for (let k = ia; ; k = (k + 1) % 7) { jours.push(k); if (k === ib) break; }
+      }
+      const reste = r[2].trim();
+      let plages = [];
+      if (/^(off|closed)$/.test(reste)) plages = null;
+      else if (reste === '') return;
+      else for (const t of reste.split(',')) {
+        const q = /^(\d{1,2}):(\d\d)\s*-\s*(\d{1,2}):(\d\d)$/.exec(t.trim());
+        if (!q) return;
+        const d = +q[1] * 60 + +q[2]; let f = +q[3] * 60 + +q[4];
+        if (f <= d) f += 1440;
+        plages.push([d, f]);
+      }
+      vu = true;
+      for (const j of jours) {
+        if (i === 0) h[j] = []; // 1re partie d'une règle : remplace ; les suivantes s'ajoutent
+        if (plages) h[j] = h[j].concat(plages);
+      }
+    });
+  }
+  return vu ? { h } : null;
+}
+function estOuvert(s, date) { // date : Date ; heure de Paris
+  const p = parserHoraires(s); if (!p) return null;
+  const f = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(date || new Date()), g = t => f.find(x => x.type === t).value;
+  const j = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'].indexOf(g('weekday'));
+  const m = +g('hour') * 60 + +g('minute');
+  if (j < 0) return null;
+  for (const [d, e] of p.h[j]) if (m >= d && m < e) return true;
+  for (const [d, e] of p.h[(j + 6) % 7]) if (e > 1440 && m < e - 1440) return true; // plage de la veille qui déborde après minuit
+  return false;
+}
+const badgeOuvert = l => { const o = estOuvert(l.horaires_osm); return o === null ? '' : o ? '<span class="ouv">Ouvert</span>' : '<span class="ferme">Fermé</span>'; };
+
 function garde(l) {
   if (choix.statut.size && !choix.statut.has(l.statut)) return false;
   if (choix.type.size && !choix.type.has(l.type)) return false;
   const nmin = +document.getElementById('f-note').value; if (nmin && !(l.note >= nmin)) return false;
   if (document.getElementById('f-commander').checked && !l.a_commander) return false;
+  if (document.getElementById('f-ouvert').checked && estOuvert(l.horaires_osm) !== true) return false;
   if (choix.tags.size) { const ks = [...choix.tags].map(t => TAG_FORME[t]), a = k => l._etiqN.includes(k);
     if (!(MODE.tous ? ks.every(a) : ks.some(a))) return false; }
   const q = norm(document.getElementById('recherche').value); if (q && !l._texte.includes(q)) return false;
@@ -353,7 +423,7 @@ function fiche(l) {
   if (l.note != null) lignes.push(`<p>${etoiles(l.note)}</p>`);
   if (l.a_commander) lignes.push('<p><span class="etiq">À commander</span></p>');
   if (l.adresse) lignes.push(`<p>${echap(l.adresse)}</p>`);
-  if (l.horaires || l.horaires_osm) lignes.push(`<p class="sous">${echap(l.horaires || l.horaires_osm)}</p>`);
+  if (l.horaires || l.horaires_osm) lignes.push(`<p class="sous">${badgeOuvert(l)} ${echap(l.horaires || l.horaires_osm)}</p>`);
   if (l.commentaire) lignes.push(`<p><em>${echap(l.commentaire)}</em></p>`);
   if (l._tags.length) lignes.push('<p>' + l._tags.map(t => `<span class="etiq">${echap(t)}</span>`).join('') + '</p>');
   const liens = [];
@@ -374,7 +444,7 @@ function afficher(cadrer) {
   document.getElementById('compteur').textContent = places.length + ' lieu' + (places.length > 1 ? 'x' : '') +
     ' sur la carte' + (sans ? ' · ' + sans + ' sans position' : '');
   const actifs = choix.type.size + choix.cuisine.size + choix.tags.size + (+document.getElementById('f-note').value ? 1 : 0)
-    + (document.getElementById('f-commander').checked ? 1 : 0) + (choix.statut.size === 2 && !choix.statut.has('Déçu') ? 0 : 1);
+    + (document.getElementById('f-commander').checked ? 1 : 0) + (document.getElementById('f-ouvert').checked ? 1 : 0) + (choix.statut.size === 2 && !choix.statut.has('Déçu') ? 0 : 1);
   const btn = document.getElementById('btnFiltres');
   btn.textContent = actifs ? 'Filtres (' + actifs + ')' : 'Filtres'; btn.classList.toggle('actif', !!actifs);
   if (cadrer && places.length) carte.fitBounds(L.latLngBounds(places.map(l => [l.lat, l.lng])), { padding: [40, 40], maxZoom: 16 });
@@ -399,7 +469,7 @@ function afficherListe(vus) {
     return `<div class="lieu${DEPLIES.has(l.id) ? ' deplie' : ''}" data-id="${echap(l.id)}"><div class="resume"><div class="ligne1"><span class="nom">` +
       `<span class="pastille" style="background:${COULEURS[l.statut] || '#444'}"></span>${echap(l.nom)}</span>` +
       `<span class="note">${l.note != null ? etoiles(l.note) : ''}</span></div>` +
-      `<div class="sous"><span class="statut" style="background:${COULEURS[l.statut] || '#444'}">${echap(l.statut || '?')}</span>` +
+      `<div class="sous"><span class="statut" style="background:${COULEURS[l.statut] || '#444'}">${echap(l.statut || '?')}</span>${badgeOuvert(l)} ` +
       `${echap([l.type, l._cuisines.join(' + ')].filter(Boolean).join(' · '))}` +
       `${l.adresse ? ' — ' + echap(l.adresse) : ''}</div>${tags ? '<div>' + tags + '</div>' : ''}</div>` +
       `<div class="detail"><p class="sous">${echap(l.statut)}</p>${fiche(l).replace(/<h3>.*?<\/h3><div class="sous">.*?<\/div>/, '')}${voir}</div></div>`;
@@ -741,10 +811,12 @@ document.getElementById('btnFermer').onclick = () => ouvrir(false);
 document.getElementById('btnRaz').onclick = () => {
   choix.statut = new Set(['Testé', 'À tester']); ['type', 'cuisine', 'tags'].forEach(k => choix[k].clear());
   document.getElementById('f-note').value = '0'; document.getElementById('f-commander').checked = false;
+  document.getElementById('f-ouvert').checked = false;
   construireFiltres(); afficher();
 };
 document.getElementById('f-note').onchange = () => afficher();
 document.getElementById('f-commander').onchange = () => afficher();
+document.getElementById('f-ouvert').onchange = () => afficher();
 document.getElementById('recherche').oninput = () => afficher();
 
 function demarrerEtVue(lieux) {
