@@ -67,6 +67,10 @@
   .doublon { background: #fff8e1; border-radius: 10px; padding: 8px 10px; margin-top: 10px; }
   #e-adresse { color: var(--doux); font-size: 14px; margin: 2px 0 0; }
   #e-gemini { font-size: 13px; color: var(--doux); margin: 8px 0 0; }
+  .pin span { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%;
+              border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); font-size: 16px; line-height: 1; }
+  .leg { display: inline-block; margin: 0 12px 6px 0; font-size: 14px; white-space: nowrap; }
+  .leg i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   .pastille { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
   .lieu .detail { display: none; border-top: 1px solid #ececf0; margin-top: 8px; padding-top: 4px; }
   .lieu.deplie .detail { display: block; }
@@ -171,6 +175,7 @@
       <button type="button" class="puce" id="m-un" aria-pressed="true">Au moins un</button>
       <button type="button" class="puce" id="m-tous" aria-pressed="false">Tous</button></div>
     <div class="puces" id="f-tags"></div></fieldset>
+  <fieldset><legend>Légende de la carte</legend><div id="f-legende"></div></fieldset>
 </div>
 <div id="edition" aria-label="Modifier un lieu">
   <div class="entete"><h2 id="e-titre">Modifier</h2><button class="lien" id="e-fermer" type="button">Fermer</button></div>
@@ -249,7 +254,7 @@ function demarrer(lieux) {
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19,
     attribution: '&copy; contributeurs <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(carte);
   calque = L.layerGroup().addTo(carte);
-  construireFiltres();
+  construireFiltres(); legende();
   afficher(true);
   // Dès que l'utilisateur regarde quelque chose (fiche ouverte, carte déplacée), la position ne recentre plus la carte.
   carte.on('popupopen dragstart', () => { FOCUS_LIEU = true; });
@@ -302,6 +307,15 @@ function garde(l) {
   return true;
 }
 
+/** R19 : pastille ronde à la couleur du statut, avec le pictogramme du type. */
+const PICTOS = { 'Restaurant': '🍴', 'Bar': '🍸', 'Café': '☕', 'Boulangerie-Pâtisserie': '🥐', 'Commerce de bouche': '🛒', 'Fromagerie': '🧀' };
+const icone = l => L.divIcon({ className: 'pin', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -15],
+  html: `<span style="background:${COULEURS[l.statut] || '#444'}">${PICTOS[l.type] || '•'}</span>` });
+function legende() {
+  document.getElementById('f-legende').innerHTML = Object.entries(PICTOS).map(([t, p]) => `<span class="leg">${p} ${echap(t)}</span>`).join('') +
+    Object.entries(COULEURS).map(([s, c]) => `<span class="leg"><i style="background:${c}"></i>${echap(s)}</span>`).join('');
+}
+
 function fiche(l) {
   const lignes = [`<h3>${echap(l.nom)}</h3>`,
     `<div class="sous">${echap([l.type, l._cuisines.join(' + ')].filter(Boolean).join(' · '))} — ${echap(l.statut)}</div>`];
@@ -323,9 +337,8 @@ function fiche(l) {
 function afficher(cadrer) {
   calque.clearLayers(); MARQUEURS = {};
   const vus = LIEUX.filter(garde), places = vus.filter(l => l.lat != null && l.lng != null);
-  places.forEach(l => MARQUEURS[l.id] = L.circleMarker([l.lat, l.lng], { radius: 8, weight: 2, color: '#fff', fillOpacity: .95,
-      fillColor: COULEURS[l.statut] || '#444' }) // la marge haute garde la fiche sous la barre de recherche
-      .bindPopup(fiche(l), { maxWidth: 280, autoPanPaddingTopLeft: [10, 70] }).addTo(calque));
+  places.forEach(l => MARQUEURS[l.id] = L.marker([l.lat, l.lng], { icon: icone(l), keyboard: false })
+      .bindPopup(fiche(l), { maxWidth: 280, autoPanPaddingTopLeft: [10, 70] }).addTo(calque)); // la marge haute garde la fiche sous la barre de recherche
   const sans = vus.length - places.length;
   document.getElementById('compteur').textContent = places.length + ' lieu' + (places.length > 1 ? 'x' : '') +
     ' sur la carte' + (sans ? ' · ' + sans + ' sans position' : '');
