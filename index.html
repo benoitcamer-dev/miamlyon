@@ -276,8 +276,13 @@ function construireFiltres() {
   // Étiquettes (tags + cuisines) regroupées sans tenir compte des majuscules ni des accents ; on affiche la forme la plus fréquente.
   const formes = {}; LIEUX.forEach(l => l._etiq.forEach(t => { const k = norm(t);
     (formes[k] = formes[k] || {})[t] = (formes[k][t] || 0) + 1; }));
+  // Un tag qui répète le type (« Restaurant », « Boulangerie » pour « Boulangerie-Pâtisserie ») n'est pas proposé : le filtre Type fait déjà ce travail.
+  // Il reste cherchable et affiché sur les fiches. Une cuisine du même nom reste proposée.
+  const typesN = new Set(), cuisinesN = new Set(LIEUX.flatMap(l => l._cuisines.map(c => norm(court(c)))));
+  LIEUX.forEach(l => { if (l.type) [l.type].concat(l.type.split(/\s*[\/-]\s*/)).forEach(t => typesN.add(norm(t))); });
   const comptes = {}; window.TAG_FORME = {};
-  Object.entries(formes).forEach(([k, f]) => { const affiche = Object.keys(f).sort((a, b) => f[b] - f[a])[0];
+  Object.entries(formes).forEach(([k, f]) => { if (typesN.has(k) && !cuisinesN.has(k)) return;
+    const affiche = Object.keys(f).sort((a, b) => f[b] - f[a])[0];
     TAG_FORME[affiche] = k; comptes[affiche] = Object.values(f).reduce((a, b) => a + b, 0); });
   puces('f-tags', 'tags', comptes);
 }
