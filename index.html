@@ -160,14 +160,17 @@
           <button class="lien" id="btnFermer" type="button">Fermer</button></span></div>
   <fieldset><legend>Statut</legend><div class="puces" id="f-statut"></div></fieldset>
   <fieldset><legend>Type</legend><div class="puces" id="f-type"></div></fieldset>
-  <fieldset><legend>Cuisine</legend><div class="puces" id="f-cuisine"></div></fieldset>
   <fieldset><legend>Note minimale</legend>
     <select id="f-note"><option value="0">Toutes</option><option value="3">3 et plus</option>
       <option value="4">4 et plus</option><option value="4.5">4,5 et plus</option><option value="5">5</option></select>
   </fieldset>
   <fieldset><legend>À commander</legend>
     <label class="case"><input type="checkbox" id="f-commander"> Seulement les lieux « à commander »</label></fieldset>
-  <fieldset><legend>Tags (le lieu doit avoir tous les tags choisis)</legend><div class="puces" id="f-tags"></div></fieldset>
+  <fieldset><legend>Cuisine et tags</legend>
+    <div class="puces mode" role="group" aria-label="Combinaison des choix" style="margin-bottom: 10px">
+      <button type="button" class="puce" id="m-un" aria-pressed="true">Au moins un</button>
+      <button type="button" class="puce" id="m-tous" aria-pressed="false">Tous</button></div>
+    <div class="puces" id="f-tags"></div></fieldset>
 </div>
 <div id="edition" aria-label="Modifier un lieu">
   <div class="entete"><h2 id="e-titre">Modifier</h2><button class="lien" id="e-fermer" type="button">Fermer</button></div>
@@ -224,12 +227,17 @@ const DEPLIES = new Set(); // fiches dépliées dans la liste
 const choix = { statut: new Set(['Testé', 'À tester']), type: new Set(), cuisine: new Set(), tags: new Set() };
 
 const norm = s => String(s || '').trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[̀-ͯ]/g, '');
+const court = c => String(c).split('/')[0].trim(); // « Français / Bistro » → « Français » (comme les tags)
+const MODE = { tous: false }; // filtre Cuisine et tags : au moins un (OU) ou tous (ET)
 const tagsDe = l => String(l.tags || '').split(',').map(s => s.trim()).filter(Boolean);
 const echap = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const etoiles = n => n == null ? '' : '★'.repeat(Math.floor(n)) + (n % 1 >= .5 ? '½' : '') + ' ' + String(n).replace('.', ',') + '/5';
 
 function prep(l) {
   l._tags = tagsDe(l); l._tagsN = l._tags.map(norm); l._cuisines = [l.cuisine, l.cuisine2].filter(Boolean);
+  const vus = new Set(); l._etiq = []; // tout est cherchable par « étiquette » : tags + cuisines, une seule fois chacune
+  l._tags.concat(l._cuisines.map(court)).forEach(t => { const k = norm(t); if (k && !vus.has(k)) { vus.add(k); l._etiq.push(t); } });
+  l._etiqN = l._etiq.map(norm);
   l._texte = norm([l.nom, l.adresse, l.cuisine, l.cuisine2, l.tags, l.commentaire].join(' '));
   return l;
 }
@@ -265,9 +273,8 @@ function puces(id, cle, comptes, ordre) {
 function construireFiltres() {
   puces('f-statut', 'statut', compter('statut', l => [l.statut]), STATUTS);
   puces('f-type', 'type', compter('type', l => [l.type]));
-  puces('f-cuisine', 'cuisine', compter('cuisine', l => l._cuisines));
-  // Tags regroupés sans tenir compte des majuscules ni des accents ; on affiche la forme la plus fréquente.
-  const formes = {}; LIEUX.forEach(l => l._tags.forEach(t => { const k = norm(t);
+  // Étiquettes (tags + cuisines) regroupées sans tenir compte des majuscules ni des accents ; on affiche la forme la plus fréquente.
+  const formes = {}; LIEUX.forEach(l => l._etiq.forEach(t => { const k = norm(t);
     (formes[k] = formes[k] || {})[t] = (formes[k][t] || 0) + 1; }));
   const comptes = {}; window.TAG_FORME = {};
   Object.entries(formes).forEach(([k, f]) => { const affiche = Object.keys(f).sort((a, b) => f[b] - f[a])[0];
@@ -275,13 +282,17 @@ function construireFiltres() {
   puces('f-tags', 'tags', comptes);
 }
 
+function reglerMode(tous) { MODE.tous = tous; document.getElementById('m-tous').setAttribute('aria-pressed', tous);
+  document.getElementById('m-un').setAttribute('aria-pressed', !tous); afficher(); }
+document.getElementById('m-un').onclick = () => reglerMode(false); document.getElementById('m-tous').onclick = () => reglerMode(true);
+
 function garde(l) {
   if (choix.statut.size && !choix.statut.has(l.statut)) return false;
   if (choix.type.size && !choix.type.has(l.type)) return false;
-  if (choix.cuisine.size && !l._cuisines.some(c => choix.cuisine.has(c))) return false;
   const nmin = +document.getElementById('f-note').value; if (nmin && !(l.note >= nmin)) return false;
   if (document.getElementById('f-commander').checked && !l.a_commander) return false;
-  for (const t of choix.tags) if (!l._tagsN.includes(TAG_FORME[t])) return false;
+  if (choix.tags.size) { const ks = [...choix.tags].map(t => TAG_FORME[t]), a = k => l._etiqN.includes(k);
+    if (!(MODE.tous ? ks.every(a) : ks.some(a))) return false; }
   const q = norm(document.getElementById('recherche').value); if (q && !l._texte.includes(q)) return false;
   return true;
 }
@@ -449,8 +460,8 @@ function remplirSelect(id, valeurs, actuelle) {
   $(id).innerHTML = '<option value="">—</option>' + v.map(x => `<option>${echap(x)}</option>`).join('');
   $(id).value = actuelle || '';
 }
-function tagsConnus() { // formes affichées, de la plus fréquente à la moins fréquente
-  const n = {}; LIEUX.forEach(l => l._tags.forEach(t => { const f = Object.keys(TAG_FORME).find(k => TAG_FORME[k] === norm(t)) || t;
+function tagsConnus() { // formes affichées, de la plus fréquente à la moins fréquente (tags et cuisines)
+  const n = {}; LIEUX.forEach(l => l._etiq.forEach(t => { const f = Object.keys(TAG_FORME).find(k => TAG_FORME[k] === norm(t)) || t;
     n[f] = (n[f] || 0) + 1; }));
   return Object.keys(n).sort((a, b) => n[b] - n[a] || a.localeCompare(b, 'fr'));
 }
@@ -526,9 +537,16 @@ $('e-sans-note').onclick = () => { EDIT.note = null; rendreEdition(); };
 $('e-plus-c2').onclick = () => { EDIT.c2 = true; rendreEdition(); $('e-cuisine2').focus(); };
 const fermerEdition = () => { $('edition').classList.remove('ouvert'); EDIT = null; };
 $('e-fermer').onclick = fermerEdition; $('e-annuler').onclick = fermerEdition;
+const CUISINES_A_PART = ['Gastro'], TAG_EN_PLUS = { Pizza: 'Italien' }; // comme côté Sheet (18/10)
+function completerTagsCuisine() { // tout doit être dans les tags : la cuisine choisie y est ajoutée si elle n'y est pas
+  [$('e-cuisine').value, EDIT.c2 ? $('e-cuisine2').value : ''].filter(c => c && !CUISINES_A_PART.includes(c)).forEach(c => {
+    [court(c), TAG_EN_PLUS[c]].filter(Boolean).forEach(t => { if (!EDIT.tags.some(x => norm(x) === norm(t)))
+      EDIT.tags.push(EDIT.connus.find(x => norm(x) === norm(t)) || t); }); });
+}
 $('e-form').onsubmit = e => {
   e.preventDefault(); if (!EDIT) return;
   if ($('e-tag').value.trim()) ajouterTag(); // tag tapé mais pas encore ajouté
+  completerTagsCuisine();
   if (EDIT.nouveau) return enregistrerAjout(false);
   const l = EDIT.l;
   const nouveau = { statut: EDIT.statut, note: EDIT.note, type: $('e-type').value, cuisine: $('e-cuisine').value,
