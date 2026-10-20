@@ -8,7 +8,7 @@ self.addEventListener('fetch', e => {
   const q = e.request, u = new URL(q.url);
   if (q.method !== 'GET') return; // appels au serveur (POST) : jamais interceptés
   if (u.origin === location.origin) // la page : le réseau d'abord, pour avoir la dernière version
-    e.respondWith(fetch(q).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put(q, c)); return r; })
+    e.respondWith(fetch(q, { cache: 'no-cache' }).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put(q, c)); return r; })
       .catch(() => caches.match(q).then(r => r || caches.match('index.html'))));
   else if (COQUILLE.includes(q.url)) e.respondWith(caches.match(q).then(r => r || fetch(q))); // Leaflet
 });
