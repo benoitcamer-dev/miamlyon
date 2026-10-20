@@ -127,6 +127,10 @@
   .btn-principal { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; }
   .btn-principal:disabled { opacity: .5; }
   .btn-second { background: var(--fond); color: var(--texte); border: 1px solid var(--bord); border-radius: 10px; padding: 10px 14px; }
+  #e-bloc-fiche { margin-top: 6px; }
+  #e-bloc-fiche summary { cursor: pointer; list-style: none; color: var(--accent); }
+  #e-bloc-fiche summary::-webkit-details-marker { display: none; }
+  #e-bloc-fiche summary::before { content: '▸ '; } #e-bloc-fiche[open] summary::before { content: '▾ '; }
   #e-erreur { color: #8a1c13; background: #fdecea; border-radius: 8px; padding: 8px 10px; display: none; margin: 12px 0 0; }
   #toast { position: absolute; z-index: 1004; left: 50%; bottom: 70px; transform: translateX(-50%); background: #1d1d1f;
            color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 14px; display: none; }
@@ -202,6 +206,14 @@
     <div class="puces" id="e-tag-res" style="margin-top: 6px"></div>
     <label class="case"><input type="checkbox" id="e-commander"> À commander</label>
     <label class="champ" for="e-commentaire">Commentaire</label><textarea id="e-commentaire" rows="3"></textarea>
+    <details id="e-bloc-fiche"><summary class="champ">Nom, horaires et liens</summary>
+      <label class="champ" for="e-nom">Nom</label><input type="text" id="e-nom" maxlength="120">
+      <label class="champ" for="e-horaires">Horaires (format OpenStreetMap)</label>
+      <input type="text" id="e-horaires" maxlength="300" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Mo-Fr 12:00-14:30,19:00-22:30; Sa 19:00-22:30">
+      <div id="e-horaires-apercu" class="sous"></div>
+      <label class="champ" for="e-lien-maps">Lien Maps</label><input type="text" id="e-lien-maps" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…">
+      <label class="champ" for="e-lien-commande">Lien de commande</label><input type="text" id="e-lien-commande" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…">
+    </details>
     <p id="e-erreur" role="alert"></p>
     <div class="actions"><button type="button" class="btn-second" id="e-annuler">Annuler</button>
       <button type="submit" class="btn-principal" id="e-enregistrer">Enregistrer</button></div>
@@ -308,14 +320,14 @@ document.getElementById('m-un').onclick = () => reglerMode(false); document.getE
 // A3 : évalue une chaîne opening_hours simple (sous-ensemble produit par Mapstr/OSM) -> true | false | null (inconnu).
 // Même code que dans Carte.html (bloc « A3 »). Test : node scripts/test_ouvert.js
 const JOURS_OH = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
-function parserHoraires(s) { // -> { h: [7 listes de [debut, fin] en minutes depuis lundi 0 h] } ou null
+function parserHoraires(s, strict) { // -> { h: [7 listes de [debut, fin] en minutes depuis lundi 0 h] } ou null
   s = String(s || '').replace(/^'/, '').trim();
   if (!s) return null;
   if (s === '24/7') return { h: JOURS_OH.map(() => [[0, 1440]]) };
   const J = '(?:Mo|Tu|We|Th|Fr|Sa|Su)';
   const dejours = '(' + J + '(?:-' + J + ')?(?:,' + J + '(?:-' + J + ')?)*)';
   const h = JOURS_OH.map(() => []);
-  let vu = false;
+  let vu = false, bad = false; // strict : toute règle illisible invalide l'ensemble (saisie dans l'app)
   for (let regle of s.split(';')) {
     regle = regle.replace(/,\s*PH\b/g, '').replace(/\bPH\s*,/g, ''); // jours fériés ignorés (inconnus)
     // un « , » suivi d'un jour ajoute une règle (cumul) ; sinon la règle remplace les jours visés
@@ -330,7 +342,7 @@ function parserHoraires(s) { // -> { h: [7 listes de [debut, fin] en minutes dep
     morceaux.forEach((m, i) => {
       m = m.replace(/\bPH\b,?/g, '').replace(/,\s*$/, '').trim();
       const r = new RegExp('^(?:' + dejours + ')?\\s*(.*)$').exec(m);
-      if (!r) return;
+      if (!r) { bad = true; return; }
       const jours = r[1] ? [] : [0, 1, 2, 3, 4, 5, 6];
       if (r[1]) for (const seg of r[1].split(',')) {
         const [a, b] = seg.split('-'), ia = JOURS_OH.indexOf(a), ib = b ? JOURS_OH.indexOf(b) : ia;
@@ -339,10 +351,10 @@ function parserHoraires(s) { // -> { h: [7 listes de [debut, fin] en minutes dep
       const reste = r[2].trim();
       let plages = [];
       if (/^(off|closed)$/.test(reste)) plages = null;
-      else if (reste === '') return;
+      else if (reste === '') { bad = true; return; }
       else for (const t of reste.split(',')) {
         const q = /^(\d{1,2}):(\d\d)\s*-\s*(\d{1,2}):(\d\d)$/.exec(t.trim());
-        if (!q) return;
+        if (!q || +q[1] > 24 || +q[3] > 24 || +q[2] > 59 || +q[4] > 59) { bad = true; return; }
         const d = +q[1] * 60 + +q[2]; let f = +q[3] * 60 + +q[4];
         if (f <= d) f += 1440;
         plages.push([d, f]);
@@ -354,7 +366,7 @@ function parserHoraires(s) { // -> { h: [7 listes de [debut, fin] en minutes dep
       }
     });
   }
-  return vu ? { h } : null;
+  return vu && !(strict && bad) ? { h } : null;
 }
 function estOuvertA(s, j, m) { // j : 0 = lundi … 6 = dimanche ; m : minutes depuis minuit
   const p = parserHoraires(s); if (!p || j < 0) return null;
@@ -616,6 +628,10 @@ function remplirEdition(l, nouveau) {
   $('e-commander').checked = !!l.a_commander; $('e-commentaire').value = l.commentaire || '';
   $('e-tag').value = ''; $('e-erreur').style.display = 'none'; $('e-enregistrer').disabled = false;
   if (!nouveau) $('e-gemini').textContent = '';
+  $('e-bloc-fiche').style.display = nouveau ? 'none' : ''; $('e-bloc-fiche').open = false;
+  $('e-nom').value = l.nom || ''; $('e-horaires').value = l.horaires_osm || '';
+  $('e-lien-maps').value = l.lien_maps || ''; $('e-lien-commande').value = l.lien_commande || '';
+  apercuHoraires();
   rendreEdition();
   $('edition').classList.add('ouvert'); $('edition').scrollTop = 0;
 }
@@ -661,6 +677,18 @@ function ajouterTag(brut) {
   if (!EDIT.tags.some(x => norm(x) === norm(t))) EDIT.tags.push(t);
   $('e-tag').value = ''; rendreEdition(); $('e-tag').focus();
 }
+const NOMS_JOURS = ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'], hhmm = m => { m %= 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+/** Aperçu par jour des horaires saisis ; renvoie false si la saisie est illisible (vide = lisible). */
+function apercuHoraires() {
+  const s = $('e-horaires').value.trim(), el = $('e-horaires-apercu');
+  if (!s) { el.textContent = 'Aucun horaire : le lieu n’apparaîtra pas dans « Ouvert ».'; return true; }
+  const p = parserHoraires(s, true);
+  if (!p) { el.textContent = 'Format non reconnu. Exemple : Mo-Fr 12:00-14:30,19:00-22:30; Sa 19:00-22:30 (jours Mo Tu We Th Fr Sa Su, « off » pour fermé).'; el.style.color = '#8a1c13'; return false; }
+  el.style.color = '';
+  el.innerHTML = p.h.map((pl, j) => NOMS_JOURS[j] + ' : ' + (pl.length ? pl.map(([d, f]) => hhmm(d) + '–' + hhmm(f)).join(', ') : 'fermé')).join('<br>');
+  return true;
+}
+$('e-horaires').oninput = apercuHoraires;
 $('e-tag').oninput = rendreRechercheTag;
 $('e-tag').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ajouterTag(); } };
 $('e-sans-note').onclick = () => { EDIT.note = null; rendreEdition(); };
@@ -679,7 +707,9 @@ $('e-form').onsubmit = e => {
   completerTagsCuisine();
   if (EDIT.nouveau) return enregistrerAjout(false);
   const l = EDIT.l;
-  const nouveau = { statut: EDIT.statut, note: EDIT.note, type: $('e-type').value, cuisine: $('e-cuisine').value,
+  if (!apercuHoraires()) { $('e-bloc-fiche').open = true; $('e-erreur').textContent = 'Horaires illisibles : corrige-les ou vide le champ.'; $('e-erreur').style.display = 'block'; return; }
+  const nouveau = { nom: $('e-nom').value.trim(), horaires_osm: $('e-horaires').value.trim(),
+    lien_maps: $('e-lien-maps').value.trim(), lien_commande: $('e-lien-commande').value.trim(), statut: EDIT.statut, note: EDIT.note, type: $('e-type').value, cuisine: $('e-cuisine').value,
     cuisine2: EDIT.c2 ? $('e-cuisine2').value : '', a_commander: $('e-commander').checked,
     commentaire: $('e-commentaire').value.trim(), tags: EDIT.tags.join(', ') };
   const avant = {}, apres = {};
