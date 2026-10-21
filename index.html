@@ -167,6 +167,8 @@
   <div class="entete"><h2>Filtres</h2>
     <span><button class="lien" id="btnRaz" type="button">Tout effacer</button>
           <button class="lien" id="btnFermer" type="button">Fermer</button></span></div>
+  <input type="search" id="f-cherche" placeholder="Chercher un type ou un tag…" aria-label="Chercher parmi les types et les tags" autocomplete="off"
+         style="width: 100%; font: inherit; font-size: 16px; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--bord); border-radius: 10px; background: var(--fond); color: inherit">
   <fieldset><legend>Statut</legend><div class="puces" id="f-statut"></div></fieldset>
   <fieldset><legend>Type</legend><div class="puces" id="f-type"></div></fieldset>
   <fieldset><legend>Note minimale</legend>
@@ -286,15 +288,23 @@ function compter(cle, valeurs) {
 }
 function puces(id, cle, comptes, ordre) {
   const el = document.getElementById(id); el.innerHTML = '';
-  const cles = ordre || Object.keys(comptes).sort((a, b) => comptes[b] - comptes[a] || a.localeCompare(b, 'fr'));
+  const cles = ordre || Object.keys(comptes).sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
   cles.filter(k => comptes[k]).forEach(k => {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'puce';
     b.setAttribute('aria-pressed', choix[cle].has(k)); b.innerHTML = echap(k) + '<span class="n">' + comptes[k] + '</span>';
     b.onclick = () => { choix[cle].has(k) ? choix[cle].delete(k) : choix[cle].add(k);
                         b.setAttribute('aria-pressed', choix[cle].has(k)); afficher(); };
-    el.appendChild(b);
+    b.dataset.k = norm(k); el.appendChild(b);
   });
+  if (id !== 'f-statut') filtrerPuces(id);
 }
+// Recherche dans les filtres : masque les puces Type et Tags qui ne contiennent pas le texte (une puce cochée reste visible).
+function filtrerPuces(id) {
+  const q = norm(document.getElementById('f-cherche').value.trim());
+  [id ? [id] : ['f-type', 'f-tags']].flat().forEach(i => document.querySelectorAll('#' + i + ' .puce').forEach(b => {
+    b.style.display = !q || b.dataset.k.includes(q) || b.getAttribute('aria-pressed') === 'true' ? '' : 'none'; }));
+}
+document.getElementById('f-cherche').oninput = () => filtrerPuces();
 function construireFiltres() {
   puces('f-statut', 'statut', compter('statut', l => [l.statut]), STATUTS);
   puces('f-type', 'type', compter('type', l => [l.type]));
@@ -591,7 +601,7 @@ function toast(t) { const el = document.getElementById('toast'); el.textContent 
 // ---------------------------------------------------------------- Actualiser : relit le Sheet, garde filtres et vue
 document.getElementById('btnActualiser').onclick = () => {
   const btn = document.getElementById('btnActualiser'); btn.disabled = true;
-  appel('lieuxPourCarte').then(lieux => { preparer(lieux); construireFiltres(); afficher(); toast('À jour : ' + lieux.length + ' lieux'); })
+  appel('lieuxPourCarte').then(lieux => { sauverLieux(lieux); preparer(lieux); construireFiltres(); afficher(); toast('À jour : ' + lieux.length + ' lieux'); })
     .catch(erreur).finally(() => { btn.disabled = false; });
 };
 
@@ -869,7 +879,18 @@ function demarrerEtVue(lieux) {
 }
 function erreur(e) { const el = document.getElementById('erreur'); el.textContent = 'Erreur : ' + (e && e.message || e);
                      el.style.display = 'block'; document.getElementById('compteur').textContent = ''; }
-appel('lieuxPourCarte').then(demarrerEtVue).catch(erreur);
+// Démarrage rapide : la dernière liste reçue (gardée dans ce téléphone) s'affiche tout de suite, puis le Sheet la remplace en arrière-plan.
+const sauverLieux = lieux => { try { localStorage.setItem('mapstr-lieux', JSON.stringify(lieux)); } catch (e) {} };
+let DEMARRE = false;
+try { const c = JSON.parse(localStorage.getItem('mapstr-lieux') || 'null');
+      if (Array.isArray(c) && c.length) { demarrerEtVue(c); DEMARRE = true; } } catch (e) {}
+appel('lieuxPourCarte').then(lieux => {
+  sauverLieux(lieux);
+  if (!DEMARRE) { demarrerEtVue(lieux); DEMARRE = true; return; }
+  preparer(lieux); construireFiltres();
+  // une fiche ouverte n'est pas fermée sous les doigts : la carte se met à jour à sa fermeture
+  if (document.querySelector('.leaflet-popup')) carte.once('popupclose', () => afficher()); else afficher();
+}).catch(e => { if (DEMARRE) toast('Hors ligne : liste enregistrée affichée'); else erreur(e); });
 appel('listesPourCarte').then(l => { LISTES = l; }).catch(erreur);
 </script>
 </body>
