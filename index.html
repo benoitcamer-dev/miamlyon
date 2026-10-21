@@ -167,8 +167,6 @@
   <div class="entete"><h2>Filtres</h2>
     <span><button class="lien" id="btnRaz" type="button">Tout effacer</button>
           <button class="lien" id="btnFermer" type="button">Fermer</button></span></div>
-  <input type="search" id="f-cherche" placeholder="Chercher un type ou un tag…" aria-label="Chercher parmi les types et les tags" autocomplete="off"
-         style="width: 100%; font: inherit; font-size: 16px; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--bord); border-radius: 10px; background: var(--fond); color: inherit">
   <fieldset><legend>Statut</legend><div class="puces" id="f-statut"></div></fieldset>
   <fieldset><legend>Type</legend><div class="puces" id="f-type"></div></fieldset>
   <fieldset><legend>Note minimale</legend>
@@ -184,6 +182,8 @@
         <option value="2">mercredi</option><option value="3">jeudi</option><option value="4">vendredi</option>
         <option value="5">samedi</option><option value="6">dimanche</option></select>
       à <input type="time" id="f-heure" value="19:00"></div></fieldset>
+  <input type="search" id="f-cherche" placeholder="Chercher un type ou un tag…" aria-label="Chercher parmi les types et les tags" autocomplete="off"
+         style="width: 100%; font: inherit; font-size: 16px; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--bord); border-radius: 10px; background: var(--fond); color: inherit">
   <fieldset><legend>Cuisine et tags</legend>
     <div class="puces mode" role="group" aria-label="Combinaison des choix" style="margin-bottom: 10px">
       <button type="button" class="puce" id="m-un" aria-pressed="true">Au moins un</button>
@@ -303,6 +303,9 @@ function filtrerPuces(id) {
   const q = norm(document.getElementById('f-cherche').value.trim());
   [id ? [id] : ['f-type', 'f-tags']].flat().forEach(i => document.querySelectorAll('#' + i + ' .puce').forEach(b => {
     b.style.display = !q || b.dataset.k.includes(q) || b.getAttribute('aria-pressed') === 'true' ? '' : 'none'; }));
+  // La fiche Type n'a plus rien à montrer quand aucune puce ne correspond : on la masque.
+  const ft = document.getElementById('f-type').closest('fieldset');
+  ft.style.display = [...document.querySelectorAll('#f-type .puce')].some(b => b.style.display !== 'none') ? '' : 'none';
 }
 document.getElementById('f-cherche').oninput = () => filtrerPuces();
 function construireFiltres() {
