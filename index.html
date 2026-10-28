@@ -110,6 +110,13 @@
   .fiche .etiq { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 999px;
                  background: #f0f0f3; margin: 2px 2px 0 0; }
   .leaflet-popup-content { margin: 12px 14px; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .fiche.compacte h3 { margin-bottom: 0; }
+  .fiche.compacte .note-c { font-size: 13px; font-weight: 400; white-space: nowrap; }
+  .fiche.compacte .plus { display: none; max-height: 40vh; overflow-y: auto; }
+  .fiche.compacte.ouverte .plus { display: block; }
+  .actions-c { display: flex; gap: 6px; margin-top: 8px; }
+  .btn-c { flex: 1; text-align: center; white-space: nowrap; font: inherit; font-size: 14px; padding: 7px 2px; border: 1px solid var(--bord); border-radius: 8px;
+           background: var(--fond); color: var(--accent); text-decoration: none; }
   .form .champ, #a-resultats .champ { display: block; margin: 14px 0 6px; font-weight: 600; font-size: 13px; color: var(--doux);
                  text-transform: uppercase; letter-spacing: .03em; }
   .form select, .form textarea, .form input[type="text"], .form input[type="search"] { width: 100%; font: inherit; font-size: 16px; padding: 8px 10px;
@@ -137,6 +144,14 @@
   #erreur { position: absolute; z-index: 1002; top: 64px; left: 10px; right: 10px; padding: 10px; border-radius: 8px;
             background: #fdecea; color: #8a1c13; display: none; }
   /* R16 : écran du code secret de la page autonome (hors Google) */
+  #reperes { position: absolute; z-index: 999; top: 98px; left: 10px; right: 10px; display: none; flex-wrap: wrap; gap: 6px; }
+  #reperes button { border: 1px solid var(--bord); background: var(--fond); color: var(--texte); border-radius: 18px;
+                    padding: 7px 12px; font: inherit; font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.2); max-width: 100%;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #reperes .poser { color: var(--accent); font-weight: 600; }
+  .repere { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid #fff;
+            box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+  .repere span { display: block; transform: rotate(45deg); color: #fff; font: 700 15px/26px system-ui, sans-serif; text-align: center; }
   #codeApp { position: fixed; inset: 0; z-index: 2000; background: var(--fond); padding: 24px 16px; display: none; }
   #codeApp.ouvert { display: block; }
   #codeApp form { max-width: 420px; margin: 0 auto; }
@@ -151,6 +166,7 @@
   <button id="btnFiltres" type="button" aria-expanded="false">Filtres</button>
   <button id="btnActualiser" type="button" aria-label="Actualiser depuis le Sheet" title="Actualiser depuis le Sheet">↻</button>
 </div>
+<div id="reperes" aria-label="Repères d'adresse"></div>
 <div id="vues" role="group" aria-label="Affichage">
   <button type="button" id="vueCarte" aria-pressed="true">Carte</button>
   <button type="button" id="vueListe" aria-pressed="false">Liste</button>
@@ -230,6 +246,12 @@
     <label class="champ" for="a-precision">Précision (facultatif)</label><input id="a-precision" type="text" placeholder="rue, quartier…">
     <div class="actions" style="position: static"><button type="submit" class="btn-principal" id="a-chercher">Chercher</button></div>
   </form>
+  <div id="a-manuel-bloc" class="form" style="display:none">
+    <label class="champ" for="a-manuel">Lien Google Maps ou adresse</label>
+    <input id="a-manuel" type="text" placeholder="lien complet du lieu, ou « 12 rue X, Lyon »" inputmode="url">
+    <div class="actions" style="position: static"><button type="button" class="btn-principal" id="a-manuel-ok">Utiliser</button></div>
+    <p id="a-manuel-msg" class="sous" role="alert"></p>
+  </div>
   <div id="a-doublons"></div>
   <div id="a-resultats"></div>
   <p id="a-erreur" class="sous" role="alert"></p>
@@ -255,6 +277,10 @@ const choix = { statut: new Set(['Testé', 'À tester']), type: new Set(), cuisi
 
 const norm = s => String(s || '').trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[̀-ͯ]/g, '');
 const court = c => String(c).split('/')[0].trim(); // « Français / Bistro » → « Français » (comme les tags)
+// Demande posée à l'IA : arrondissement (codes postaux) et zone autour d'un point (adresse, métro, quartier) ; le reste passe par les filtres habituels.
+const IA = { cp: [], ref: null, rayon: 0, resume: '' };
+const distanceM = (a, b) => { const r = x => x * Math.PI / 180, h = Math.sin(r(b.lat - a.lat) / 2) ** 2
+  + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2; return 12742000 * Math.asin(Math.sqrt(h)); };
 const MODE = { tous: false }; // filtre Cuisine et tags : au moins un (OU) ou tous (ET)
 const tagsDe = l => String(l.tags || '').split(',').map(s => s.trim()).filter(Boolean);
 const echap = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -409,6 +435,8 @@ function garde(l) {
   if (choix.tags.size) { const ks = [...choix.tags].map(t => TAG_FORME[t]), a = k => l._etiqN.includes(k);
     if (!(MODE.tous ? ks.every(a) : ks.some(a))) return false; }
   const q = norm(document.getElementById('recherche').value); if (q && !l._texte.includes(q)) return false;
+  if (IA.cp.length && !IA.cp.some(cp => (l.adresse || '').includes(cp))) return false;
+  if (IA.ref && !(l.lat != null && distanceM(l, IA.ref) <= IA.rayon)) return false;
   return true;
 }
 
@@ -453,6 +481,25 @@ function legende() {
     STATUTS.map(s => `<span class="leg">${marqueur('Restaurant', s, 28)}${libelle[s]}</span>`).join('');
 }
 
+/** Fiche compacte de la popup (téléphone) : nom, étoiles, type, boutons ; le reste est derrière « Plus ». */
+function ficheCompacte(l) {
+  const detail = [];
+  if (l.a_commander) detail.push('<p><span class="etiq">À commander</span></p>');
+  if (l.adresse) detail.push(`<p>${echap(l.adresse)}</p>`);
+  if (l.horaires || l.horaires_osm) detail.push(`<p class="sous">${echap(l.horaires || l.horaires_osm)}</p>`);
+  if (l.commentaire) detail.push(`<p><em>${echap(l.commentaire)}</em></p>`);
+  if (l._tags.length) detail.push('<p>' + l._tags.map(t => `<span class="etiq">${echap(t)}</span>`).join('') + '</p>');
+  if (/^https?:/.test(l.lien_commande)) detail.push(`<p><a href="${echap(l.lien_commande)}" target="_blank" rel="noopener">Commander</a></p>`);
+  const itin = /^https?:/.test(l.lien_maps) ? l.lien_maps
+    : l.lat != null ? `https://www.openstreetmap.org/?mlat=${l.lat}&mlon=${l.lng}#map=18/${l.lat}/${l.lng}` : '';
+  return '<div class="fiche compacte">' +
+    `<h3>${echap(l.nom)}${l.note != null ? ' <span class="note-c">' + etoiles(l.note) + '</span>' : ''}</h3>` +
+    `<div class="sous">${badgeOuvert(l)} ${echap([l.type, l._cuisines.join(' + '), l.statut].filter(Boolean).join(' · '))}</div>` +
+    `<div class="actions-c">${itin ? `<a class="btn-c" href="${echap(itin)}" target="_blank" rel="noopener">Itinéraire</a>` : ''}` +
+    (detail.length ? '<button type="button" class="btn-c" data-plus="1">Plus ▾</button>' : '') +
+    `<button type="button" class="btn-c" data-modifier="${echap(l.id)}">Modifier</button></div>` +
+    (detail.length ? '<div class="plus">' + detail.join('') + '</div>' : '') + '</div>';
+}
 function fiche(l) {
   const lignes = [`<h3>${echap(l.nom)}</h3>`,
     `<div class="sous">${echap([l.type, l._cuisines.join(' + ')].filter(Boolean).join(' · '))} — ${echap(l.statut)}</div>`];
@@ -475,7 +522,7 @@ function afficher(cadrer) {
   calque.clearLayers(); MARQUEURS = {};
   const vus = LIEUX.filter(garde), places = vus.filter(l => l.lat != null && l.lng != null);
   places.forEach(l => MARQUEURS[l.id] = L.marker([l.lat, l.lng], { icon: icone(l), keyboard: false })
-      .bindPopup(fiche(l), { maxWidth: 280, autoPanPaddingTopLeft: [10, 70] }).addTo(calque)); // la marge haute garde la fiche sous la barre de recherche
+      .bindPopup(ficheCompacte(l), { maxWidth: 280, autoPanPaddingTopLeft: [10, 70] }).addTo(calque)); // la marge haute garde la fiche sous la barre de recherche
   const sans = vus.length - places.length;
   document.getElementById('compteur').textContent = places.length + ' lieu' + (places.length > 1 ? 'x' : '') +
     ' sur la carte' + (sans ? ' · ' + sans + ' sans position' : '');
@@ -598,8 +645,8 @@ async function appelApi(nom, args) {
     garderCode(''); code = await demanderCode('Code refusé : vérifie-le et tape-le à nouveau.');
   }
 }
-function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.style.display = 'block';
-                    clearTimeout(toast.h); toast.h = setTimeout(() => { el.style.display = 'none'; }, 2500); }
+function toast(t, ms) { const el = document.getElementById('toast'); el.textContent = t; el.style.display = 'block';
+                    clearTimeout(toast.h); toast.h = setTimeout(() => { el.style.display = 'none'; }, ms || 2500); }
 
 // ---------------------------------------------------------------- Actualiser : relit le Sheet, garde filtres et vue
 document.getElementById('btnActualiser').onclick = () => {
@@ -620,6 +667,14 @@ function tagsConnus() { // formes affichées, de la plus fréquente à la moins 
     n[f] = (n[f] || 0) + 1; }));
   return Object.keys(n).sort((a, b) => n[b] - n[a] || a.localeCompare(b, 'fr'));
 }
+document.addEventListener('click', e => { // bouton « Plus » de la fiche compacte : déplie ou replie le détail
+  const p = e.target.closest('[data-plus]'); if (!p) return;
+  const f = p.closest('.fiche'), ouverte = f.classList.toggle('ouverte');
+  p.textContent = ouverte ? 'Moins ▴' : 'Plus ▾';
+  e.stopPropagation(); // Leaflet bloque déjà les clics de la popup : l'écouteur est en capture
+  const pop = carte && carte._popup; // pas popup.update() : il reconstruit le contenu et efface l'état déplié
+  if (pop && pop._updateLayout) { pop._updateLayout(); pop._updatePosition(); pop._adjustPan(); } // taille, position, recadrage
+}, true);
 document.addEventListener('click', e => { // bouton Modifier des fiches (carte et liste)
   const b = e.target.closest('[data-modifier]'); if (!b) return;
   e.stopPropagation(); ouvrirEdition(b.dataset.modifier);
@@ -763,6 +818,7 @@ function ouvrirAjout() {
   ouvrir(false); fermerEdition(); if (carte) carte.closePopup();
   AJOUT = null; $('a-nom').value = ''; $('a-precision').value = '';
   ['a-doublons', 'a-resultats', 'a-erreur'].forEach(id => { $(id).innerHTML = ''; });
+  $('a-manuel-bloc').style.display = 'none'; $('a-manuel').value = ''; $('a-manuel-msg').textContent = '';
   $('ajout').classList.add('ouvert'); $('a-nom').focus();
 }
 const fermerAjout = () => $('ajout').classList.remove('ouvert');
@@ -811,15 +867,49 @@ function rendreCandidats() {
       `<strong>${echap(c.nom_osm || AJOUT.nom)}</strong><br><span class="sous">${echap(c.adresse || 'adresse inconnue')}` +
       `${c.type ? ' · ' + echap(c.type) : ''}${c.horaires_osm ? ' · horaires connus' : ''}</span></button>`).join('') +
     `<button type="button" class="candidat" data-cand="-1"><strong>Aucun de ceux-là</strong>` +
-    `<br><span class="sous">enregistrer sans adresse (à compléter plus tard)</span></button>`;
+    `<br><span class="sous">enregistrer sans adresse (à compléter plus tard)</span></button>` +
+    `<button type="button" class="candidat" data-manuel="1"><strong>Coller un lien Google Maps ou une adresse</strong>` +
+    `<br><span class="sous">pour un lieu qu'OpenStreetMap ne connaît pas</span></button>`;
   el.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 $('ajout').addEventListener('click', e => {
   const o = e.target.closest('[data-ouvrir]');
   if (o) { fermerAjout(); ouvrirEdition(o.dataset.ouvrir); return; }
+  if (e.target.closest('[data-manuel]')) { // le champ est en haut du panneau (clavier du téléphone) : on y remonte
+    $('a-manuel-bloc').style.display = 'block'; $('ajout').scrollTop = 0; $('a-manuel').focus(); return; }
   const c = e.target.closest('[data-cand]');
   if (c) { AJOUT.choix = +c.dataset.cand; continuerAjout(); }
 });
+/** Position lue dans un lien Google Maps complet (ou « lat, lng » collé). Préfère le repère (!3d !4d) au centre de la carte (@). */
+function coordsDepuisLien(s) {
+  if (/(^|\/\/)(maps\.app\.goo\.gl|goo\.gl)\b/i.test(s)) throw new Error('Lien court : ouvre-le dans le navigateur, puis copie le lien complet de la barre d\'adresse (ou tape l\'adresse).');
+  const m = s.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/) || s.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/)
+    || s.match(/[?&](?:q|query|ll|destination)=(-?\d+(?:\.\d+)?)(?:,|%2C)\s*(-?\d+(?:\.\d+)?)/i) || s.match(/^\s*(-?\d{1,2}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)\s*$/);
+  if (!m) throw new Error('Pas de position dans ce lien : tape plutôt l\'adresse.');
+  return { lat: +m[1], lng: +m[2] };
+}
+async function utiliserManuel() {
+  const t = $('a-manuel').value.trim(), msg = $('a-manuel-msg'); if (!t) { $('a-manuel').focus(); return; }
+  document.activeElement.blur(); msg.textContent = 'Recherche…'; $('a-manuel-ok').disabled = true;
+  try {
+    const lien = /^https?:\/\//i.test(t) || /^\s*-?\d{1,2}\.\d+\s*[,;\s]\s*-?\d{1,3}\.\d+\s*$/.test(t);
+    let r;
+    if (lien) { // position lue dans le lien ; l'adresse vient du géocodeur, sans elle le lieu est enregistré « adresse à trouver »
+      const p = coordsDepuisLien(t); r = await appel('localiserLieu', '', p.lat, p.lng);
+      if (r.erreur && /hors de/.test(r.erreur)) throw new Error('Ce lieu est hors de la métropole de Lyon : l\'app ne gère que Lyon.');
+      if (r.erreur) r = { adresse: '', ville: '', lat: p.lat, lng: p.lng };
+    } else {
+      r = await appel('localiserLieu', t, '', '');
+      if (r.erreur) throw new Error(/hors de/.test(r.erreur) ? 'Ce lieu est hors de la métropole de Lyon : l\'app ne gère que Lyon.' : 'Adresse non trouvée : ' + r.erreur);
+    }
+    AJOUT.candidats.push({ nom_osm: AJOUT.nom, ressemblance: 1, categorie: '', alimentaire: false, type: '', cuisine_osm: '',
+      adresse: r.adresse, ville: r.ville, lat: r.lat, lng: r.lng, horaires_osm: '' });
+    AJOUT.choix = AJOUT.candidats.length - 1; msg.textContent = ''; continuerAjout();
+  } catch (err) { msg.textContent = String(err && err.message || err); }
+  $('a-manuel-ok').disabled = false;
+}
+$('a-manuel-ok').onclick = utiliserManuel;
+$('a-manuel').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); utiliserManuel(); } };
 function continuerAjout() {
   const c = AJOUT.choix >= 0 ? AJOUT.candidats[AJOUT.choix] : null;
   const brouillon = prep({ id: '', nom: AJOUT.nom, type: c ? c.type : '', cuisine: '', cuisine2: '', statut: 'À tester', note: null,
@@ -867,7 +957,8 @@ document.getElementById('btnRaz').onclick = () => {
   document.getElementById('f-note').value = '0'; document.getElementById('f-commander').checked = false;
   document.getElementById('f-ouvert').checked = false;
   document.getElementById('f-jour').value = ''; document.getElementById('f-heure').value = '19:00';
-  construireFiltres(); afficher();
+  IA.cp = []; IA.ref = null; IA.resume = '';
+  construireFiltres(); afficher(); majReperes();
 };
 document.getElementById('f-note').onchange = () => afficher();
 document.getElementById('f-commander').onchange = () => afficher();
@@ -876,6 +967,106 @@ document.getElementById('f-jour').onchange = () => { if (momentChoisi()) documen
 document.getElementById('f-heure').onchange = () => afficher();
 document.getElementById('recherche').oninput = () => afficher();
 
+// Repères d'adresse (A, B) : posés sur la carte pour situer une adresse (la sienne, celle d'un ami) par rapport aux lieux.
+// Rien n'est enregistré : ni dans le Sheet, ni dans ce téléphone.
+const REPERES = [null, null], COULEURS_REPERE = ['#6d28d9', '#c2410c'];
+let calqueReperes = null;
+async function geocoderAdresse(texte) {
+  const params = new URLSearchParams({ q: texte, format: 'jsonv2', limit: 1, addressdetails: 1, countrycodes: 'fr',
+    'accept-language': 'fr', viewbox: '4.70,45.85,5.02,45.68' });
+  const rep = await fetch('https://nominatim.openstreetmap.org/search?' + params);
+  if (!rep.ok) throw new Error('OpenStreetMap indisponible (HTTP ' + rep.status + ')');
+  const r = (await rep.json())[0]; if (!r) return null;
+  const a = r.address || {}, rue = [a.house_number, a.road || a.pedestrian || a.square].filter(Boolean).join(' ');
+  const ville = [a.postcode, a.city || a.town || a.village || a.municipality].filter(Boolean).join(' ');
+  return { lat: +r.lat, lng: +r.lon, adresse: [rue, ville].filter(Boolean).join(', ') || r.display_name };
+}
+function majReperes() {
+  if (!carte) return;
+  if (!calqueReperes) calqueReperes = L.layerGroup().addTo(carte);
+  calqueReperes.clearLayers();
+  REPERES.forEach((p, i) => { if (!p) return; const nom = 'AB'[i];
+    L.marker([p.lat, p.lng], { zIndexOffset: 2000, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28],
+      html: '<div class="repere" style="background:' + COULEURS_REPERE[i] + '"><span>' + nom + '</span></div>' }) })
+      .bindPopup('<strong>' + nom + '</strong> : ' + echap(p.adresse)).addTo(calqueReperes); });
+  if (IA.ref) L.circle([IA.ref.lat, IA.ref.lng], { radius: IA.rayon, color: '#6d28d9', weight: 2, dashArray: '6 6', fillOpacity: .05, interactive: false }).addTo(calqueReperes);
+  const zone = $('reperes'), q = $('recherche').value.trim();
+  zone.innerHTML = '';
+  if (q) { [['📍 Placer « ' + q + ' » sur la carte', poserAdresse], ['✨ Demander à l\'IA : « ' + q + ' »', demanderIA]].forEach(([t, f]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'poser'; b.textContent = t; b.onclick = f; zone.appendChild(b); }); }
+  if (IA.resume) { const b = document.createElement('button'); b.type = 'button'; b.textContent = '✨ ' + IA.resume + '  ✕'; b.title = 'Retirer la demande à l\'IA';
+    b.onclick = razIA; zone.appendChild(b); }
+  REPERES.forEach((p, i) => { if (!p) return; const b = document.createElement('button'); b.type = 'button';
+    b.textContent = 'AB'[i] + ' : ' + p.adresse + '  ✕'; b.title = 'Retirer ce repère';
+    b.onclick = () => { REPERES[i] = null; majReperes(); }; zone.appendChild(b); });
+  zone.style.display = zone.children.length ? 'flex' : 'none';
+}
+/** Pose p en A, puis en B ; deux déjà posés : B est remplacé. Renvoie le rang (0 ou 1). */
+function placerRepere(p) { const i = REPERES[0] ? 1 : 0; REPERES[i] = p; FOCUS_LIEU = true; return i; }
+async function poserAdresse() {
+  const q = $('recherche').value.trim(); if (!q) return;
+  toast('Recherche de l\'adresse…');
+  try {
+    const p = await geocoderAdresse(q);
+    if (!p) { toast('Adresse introuvable, ajoute la ville ou le code postal'); return; }
+    const i = placerRepere(p);
+    $('recherche').value = ''; afficher(); majReperes();
+    const pts = REPERES.filter(Boolean).map(x => [x.lat, x.lng]);
+    if (pts.length > 1) carte.fitBounds(pts, { padding: [60, 60], maxZoom: 16 }); else carte.setView(pts[0], Math.max(carte.getZoom(), 15));
+    toast('Repère ' + 'AB'[i] + ' : ' + p.adresse);
+  } catch (e) { toast('Erreur : ' + (e && e.message || e)); }
+}
+
+// ---- Demander à l'IA : Gemini (côté serveur) traduit la phrase en filtres ; ils s'appliquent aux lieux déjà enregistrés. Rien n'est écrit dans le Sheet.
+const arrondissementTexte = n => n === '1' ? '1er' : n + 'e';
+function razIA() {
+  choix.tags.clear(); choix.type.clear(); IA.cp = []; IA.ref = null; IA.resume = '';
+  $('f-jour').value = ''; $('f-heure').value = '19:00';
+  construireFiltres(); afficher(); majReperes();
+}
+/** Un message de l'IA reste affiché dans la pastille ✨ (jusqu'à ✕) : un toast de 2 s se rate facilement. */
+function messageIA(t) { IA.resume = '⚠ ' + t; majReperes(); }
+async function demanderIA() {
+  const q = $('recherche').value.trim(); if (!q) return;
+  messageIA('l\'IA lit ta demande…');
+  try { await interpreterEtAppliquer(q); } catch (e) { messageIA('erreur : ' + (e && e.message || e)); }
+}
+async function interpreterEtAppliquer(q) {
+  let r; try { r = await appel('interpreterDemande', q); } catch (e) { messageIA('erreur : ' + (e && e.message || e)); return; }
+  if (!r || r.erreur) { messageIA(r && r.erreur || 'pas de réponse'); return; }
+  // « Africain » devient plusieurs cuisines : on ne garde que celles qu'au moins un lieu de la liste porte.
+  const cles = Object.keys(TAG_FORME).filter(k => r.etiquettes.some(x => [norm(x), norm(court(x))].includes(TAG_FORME[k])));
+  if (r.etiquettes.length && !cles.length) { messageIA('aucun lieu de ta liste ne correspond à cette cuisine'); return; }
+  const parties = [];
+  if (!(cles.length || r.types.length || r.arrondissement || r.reference || r.jour != null)) { messageIA('rien trouvé à filtrer dans cette demande'); return; }
+  let ref = null, raison = '';
+  if (r.reference) {
+    // Nominatim ne connaît pas « métro Bellecour » mais connaît « Bellecour » : on essaie le nom seul d'abord, puis tel quel.
+    const nom = r.reference.replace(/^(m[ée]tro|station( de m[ée]tro)?|gare|arr[êe]t)\s+/i, '');
+    for (const t of [...new Set([nom, r.reference])]) {
+      try { ref = await geocoderAdresse(/lyon/i.test(t) ? t : t + ', Lyon'); } catch (e) { ref = null; raison = String(e && e.message || e); }
+      if (ref) break;
+    }
+  }
+  choix.tags = new Set(cles); choix.type = new Set(r.types); MODE.tous = false;
+  $('m-tous').setAttribute('aria-pressed', false); $('m-un').setAttribute('aria-pressed', true);
+  if (cles.length) parties.push(cles.join(' / '));
+  if (r.types.length) parties.push(r.types.join(' / '));
+  IA.cp = r.arrondissement ? ['6900' + r.arrondissement] : [];
+  if (IA.cp.length) parties.push('Lyon ' + arrondissementTexte(r.arrondissement));
+  IA.ref = ref; IA.rayon = r.rayon_m;
+  if (ref) { parties.push('à moins de ' + (r.rayon_m >= 1000 ? (r.rayon_m / 1000).toString().replace('.', ',') + ' km' : r.rayon_m + ' m') + ' de ' + r.reference);
+    placerRepere(ref); }
+  $('f-ouvert').checked = false;
+  if (r.jour != null) { $('f-jour').value = String(r.jour); $('f-heure').value = r.heure; parties.push('ouvert ' + ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'][r.jour] + ' ' + r.heure); }
+  else { $('f-jour').value = ''; }
+  if (r.reference && !ref) parties.push('référence introuvable : ' + r.reference + (raison ? ' (' + raison + ')' : ''));
+  IA.resume = parties.join(' · ');
+  $('recherche').value = ''; construireFiltres(); afficher(); majReperes();
+  if (ref) carte.fitBounds(L.latLng(ref.lat, ref.lng).toBounds(2 * IA.rayon), { padding: [40, 40], maxZoom: 16 });
+  else if (window.ETAT && ETAT.affiches) afficher(true);
+}
+$('recherche').addEventListener('input', majReperes);
 function demarrerEtVue(lieux) {
   demarrer(lieux); let v = 'carte'; try { v = localStorage.getItem('mapstr-vue') || 'carte'; } catch (e) {}
   vue(v === 'liste' ? 'liste' : 'carte');

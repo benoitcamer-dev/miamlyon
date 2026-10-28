@@ -1,6 +1,6 @@
-// Service worker de Mapstr perso (généré par scripts/generer_pwa.py, version ecf856bd3263).
+// Service worker de Mapstr perso (généré par scripts/generer_pwa.py, version faf00354d37a).
 // La page s'ouvre même sans réseau (dernière version connue) ; les données du Sheet ne sont jamais mises en cache.
-const CACHE = 'mapstr-ecf856bd3263', TUILES = 'mapstr-tuiles', MAX_TUILES = 800, COQUILLE = ["./", "index.html", "manifest.webmanifest", "icone-192.png", "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css", "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"];
+const CACHE = 'mapstr-faf00354d37a', TUILES = 'mapstr-tuiles', MAX_TUILES = 800, COQUILLE = ["./", "index.html", "manifest.webmanifest", "icone-192.png", "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css", "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(COQUILLE)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys()
   .then(k => Promise.all(k.filter(n => n !== CACHE && n !== TUILES).map(n => caches.delete(n)))).then(() => self.clients.claim())));
