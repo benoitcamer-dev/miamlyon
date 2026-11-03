@@ -184,6 +184,7 @@
     <span><button class="lien" id="btnRaz" type="button">Tout effacer</button>
           <button class="lien" id="btnFermer" type="button">Fermer</button></span></div>
   <fieldset><legend>Statut</legend><div class="puces" id="f-statut"></div></fieldset>
+  <fieldset><legend>Arrondissement (Lyon)</legend><div class="puces" id="f-arr"></div></fieldset>
   <fieldset><legend>Type</legend><div class="puces" id="f-type"></div></fieldset>
   <fieldset><legend>Note minimale</legend>
     <select id="f-note"><option value="0">Toutes</option><option value="3">3 et plus</option>
@@ -344,9 +345,23 @@ function filtrerPuces(id) {
   ft.style.display = [...document.querySelectorAll('#f-type .puce')].some(b => b.style.display !== 'none') ? '' : 'none';
 }
 document.getElementById('f-cherche').oninput = () => filtrerPuces();
+// Filtre par arrondissement (Lyon 1er à 9e, sans IA) : pastilles qui alimentent IA.cp (codes postaux 69001 à 69009). Combinable avec tout le reste.
+function arrondissements() {
+  const el = document.getElementById('f-arr'); el.innerHTML = '';
+  for (let n = 1; n <= 9; n++) {
+    const cp = '6900' + n, nb = LIEUX.filter(l => (l.adresse || '').includes(cp)).length;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'puce'; b.dataset.cp = cp;
+    b.setAttribute('aria-pressed', IA.cp.includes(cp));
+    b.innerHTML = (n === 1 ? '1er' : n + 'e') + '<span class="n">' + nb + '</span>';
+    b.onclick = () => { const i = IA.cp.indexOf(cp); if (i >= 0) IA.cp.splice(i, 1); else IA.cp.push(cp);
+                        b.setAttribute('aria-pressed', IA.cp.includes(cp)); afficher(); };
+    el.appendChild(b);
+  }
+}
 function construireFiltres() {
   puces('f-statut', 'statut', compter('statut', l => [l.statut]), STATUTS);
   puces('f-type', 'type', compter('type', l => [l.type]));
+  arrondissements();
   // Étiquettes (tags + cuisines) regroupées sans tenir compte des majuscules ni des accents ; on affiche la forme la plus fréquente.
   const formes = {}; LIEUX.forEach(l => l._etiq.forEach(t => { const k = norm(t);
     (formes[k] = formes[k] || {})[t] = (formes[k][t] || 0) + 1; }));
