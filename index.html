@@ -226,6 +226,11 @@
     <label class="champ" for="e-commentaire">Commentaire</label><textarea id="e-commentaire" rows="3"></textarea>
     <details id="e-bloc-fiche"><summary class="champ">Nom, horaires et liens</summary>
       <label class="champ" for="e-nom">Nom</label><input type="text" id="e-nom" maxlength="120">
+      <span class="champ">Adresse et position</span>
+      <p id="e-adr-actuelle" class="sous"></p>
+      <div style="display:flex;gap:6px"><input type="text" id="e-adr-q" maxlength="150" placeholder="Nouvelle adresse (n° + rue)…" aria-label="Nouvelle adresse" style="flex:1">
+        <button type="button" class="lien" id="e-adr-chercher">Chercher</button></div>
+      <div id="e-adr-res" class="sous" aria-live="polite"></div>
       <button type="button" class="lien" id="e-verifier">🔎 Vérifier ce lieu dans OpenStreetMap</button>
       <div id="e-verif" class="sous" aria-live="polite"></div>
       <span class="champ">Horaires</span>
@@ -705,6 +710,7 @@ function remplirEdition(l, nouveau) {
   $('e-nom').value = l.nom || ''; $('e-horaires').value = l.horaires_osm || '';
   $('e-lien-maps').value = l.lien_maps || ''; $('e-lien-commande').value = l.lien_commande || '';
   apercuHoraires(); chargerGrille(); $('e-bloc-texte').open = false; $('e-verif').textContent = '';
+  EDIT.adr = null; $('e-adr-q').value = ''; $('e-adr-res').innerHTML = ''; majAdresseActuelle();
   rendreEdition();
   $('edition').classList.add('ouvert'); $('edition').scrollTop = 0;
 }
@@ -814,6 +820,48 @@ function rendreGrille() {
   });
 }
 function chargerGrille() { GRILLE = grilleDepuisTexte($('e-horaires').value); rendreGrille(); }
+// ---- Lot B : changer adresse + ville + position ensemble (la recherche se fait depuis la page : Nominatim refuse les serveurs de Google)
+function majAdresseActuelle() {
+  const l = EDIT.l, pos = l.lat != null && l.lat !== '' ? 'position connue' : 'position inconnue';
+  $('e-adr-actuelle').innerHTML = EDIT.adr
+    ? 'À enregistrer : <b>' + echap(EDIT.adr.adresse) + '</b> (position ' + EDIT.adr.lat.toFixed(5) + ', ' + EDIT.adr.lng.toFixed(5) + ')'
+      + (EDIT.adr.d != null ? ' · à ' + Math.round(EDIT.adr.d) + ' m de l’ancienne' : '') + ' <button type="button" class="lien" id="e-adr-annuler">Annuler</button>'
+    : 'Actuelle : ' + echap([l.adresse, l.ville].filter(Boolean).join(', ') || 'aucune adresse') + ' (' + pos + ')';
+  const a = $('e-adr-annuler'); if (a) a.onclick = () => { EDIT.adr = null; majAdresseActuelle(); };
+}
+async function chercherAdresse(q) {
+  const params = new URLSearchParams({ q, format: 'jsonv2', limit: 6, addressdetails: 1, viewbox: '4.70,45.85,5.02,45.68', bounded: 1,
+    countrycodes: 'fr', 'accept-language': 'fr' });
+  const rep = await fetch('https://nominatim.openstreetmap.org/search?' + params);
+  if (!rep.ok) throw new Error('OpenStreetMap indisponible (HTTP ' + rep.status + ')');
+  return (await rep.json()).map(r => {
+    const a = r.address || {}, rue = [a.house_number, a.road || a.pedestrian || a.square].filter(Boolean).join(' ');
+    const ville = a.city || a.town || a.village || a.municipality || '';
+    return { adresse: [rue, [a.postcode, ville].filter(Boolean).join(' ')].filter(Boolean).join(', '), ville, lat: +r.lat, lng: +r.lon,
+      numero: !!a.house_number, voie: r.category === 'highway' || r.category === 'place' || r.category === 'boundary' };
+  }).filter(c => c.adresse && Number.isFinite(c.lat) && Number.isFinite(c.lng));
+}
+$('e-adr-chercher').onclick = async () => {
+  if (!EDIT) return; const l = EDIT.l, q = $('e-adr-q').value.trim(), zone = $('e-adr-res');
+  if (!q) { zone.textContent = 'Tape une adresse.'; return; }
+  zone.textContent = 'Recherche dans OpenStreetMap…';
+  try {
+    const pos = l.lat != null && l.lat !== '' && l.lng != null && l.lng !== '' ? { lat: +l.lat, lng: +l.lng } : null;
+    const res = (await chercherAdresse(q)).slice(0, 4);
+    if (!EDIT || EDIT.l !== l) return;
+    if (!res.length) { zone.textContent = 'Aucune adresse trouvée dans la métropole de Lyon. Essaie avec le numéro, la rue et le code postal.'; return; }
+    zone.innerHTML = '';
+    res.forEach(c => {
+      c.d = pos ? distanceM(pos, c) : null;
+      const ok = c.numero || !c.voie, ligne = document.createElement('div'); ligne.style.margin = '6px 0';
+      if (ok) { const b = document.createElement('button'); b.type = 'button'; b.className = 'puce'; b.style.textAlign = 'left';
+        b.textContent = c.adresse + (c.d != null ? ' · à ' + Math.round(c.d) + ' m de l’ancienne' : '');
+        b.onclick = () => { EDIT.adr = c; zone.innerHTML = ''; majAdresseActuelle(); }; ligne.appendChild(b); }
+      else ligne.textContent = c.adresse + ' : rue sans numéro, position trop imprécise (refusée).';
+      zone.appendChild(ligne);
+    });
+  } catch (e) { if (EDIT && EDIT.l === l) zone.textContent = 'Recherche impossible : ' + (e.message || e); }
+};
 /** « Vérifier ce lieu » : compare la fiche à OpenStreetMap ; ne remplit le formulaire que sur clic, n'enregistre rien. */
 const sansEsp = s => String(s || '').replace(/\s+/g, '').toLowerCase();
 $('e-verifier').onclick = async () => {
@@ -871,7 +919,12 @@ $('e-form').onsubmit = e => {
     cuisine2: EDIT.c2 ? $('e-cuisine2').value : '', a_commander: $('e-commander').checked,
     commentaire: $('e-commentaire').value.trim(), tags: EDIT.tags.join(', ') };
   const avant = {}, apres = {};
+  if (EDIT.adr) { // lot B : les quatre champs partent ensemble, même si l'un est inchangé
+    Object.assign(nouveau, { adresse: EDIT.adr.adresse, ville: EDIT.adr.ville, lat: EDIT.adr.lat, lng: EDIT.adr.lng });
+    ['adresse', 'ville', 'lat', 'lng'].forEach(k => { avant[k] = l[k]; apres[k] = nouveau[k]; });
+  }
   Object.keys(nouveau).forEach(k => {
+    if (EDIT.adr && ['adresse', 'ville', 'lat', 'lng'].includes(k)) return;
     const ancien = k === 'tags' ? l._tags.join(', ') : l[k] ?? (k === 'note' ? null : '');
     if (JSON.stringify(nouveau[k]) !== JSON.stringify(ancien)) { avant[k] = l[k]; apres[k] = nouveau[k]; }
   });
@@ -927,7 +980,8 @@ async function chercherOSM(nom, precision) {
     const a = r.address || {}, x = r.extratags || {}, nomOsm = (r.namedetails || {}).name || r.name || '';
     const rue = [a.house_number, a.road || a.pedestrian || a.square].filter(Boolean).join(' ');
     const ville = a.city || a.town || a.village || a.municipality || '';
-    return { nom_osm: nomOsm, ressemblance: ressemblance(nom, nomOsm), categorie: r.category + '/' + r.type,
+    const autresNoms = Object.values(r.namedetails || {}); // name:fr, alt_name… (ex. Kefi est « Κϵφι » en grec, alt_name « Kefi »)
+    return { nom_osm: nomOsm, ressemblance: Math.max(ressemblance(nom, nomOsm), ...autresNoms.map(n => ressemblance(nom, n))), categorie: r.category + '/' + r.type,
       alimentaire: !!TYPE_OSM[r.type] && (r.category === 'amenity' || r.category === 'shop'), type: TYPE_OSM[r.type] || '',
       cuisine_osm: x.cuisine || '', adresse: [rue, [a.postcode, ville].filter(Boolean).join(' ')].filter(Boolean).join(', '),
       ville, lat: +r.lat, lng: +r.lon, horaires_osm: x.opening_hours || '',
