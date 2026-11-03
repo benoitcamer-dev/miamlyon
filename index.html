@@ -212,6 +212,10 @@
   <div class="entete"><h2 id="e-titre">Modifier</h2><button class="lien" id="e-fermer" type="button">Fermer</button></div>
   <p id="e-adresse"></p><p id="e-gemini"></p>
   <form id="e-form" class="form" autocomplete="off">
+    <div id="e-bloc-dicter"><label class="champ" for="e-dicter">✨ Dire ce qu'il faut changer (horaires, tags)</label>
+      <div style="display:flex;gap:6px"><input type="text" id="e-dicter" maxlength="300" placeholder="ex. mardi à samedi 12h-14h et 19h-22h, dimanche fermé" style="flex:1">
+        <button type="button" class="lien" id="e-dicter-ok">Traduire</button></div>
+      <div id="e-dicter-res" class="sous" aria-live="polite"></div></div>
     <span class="champ">Statut</span><div class="puces" id="e-statut"></div>
     <div id="e-bloc-note"><span class="champ">Note</span>
       <div class="etoiles"><span id="e-etoiles"></span><span id="e-note-txt"></span>
@@ -721,6 +725,7 @@ function remplirEdition(l, nouveau) {
   $('e-commander').checked = !!l.a_commander; $('e-commentaire').value = l.commentaire || '';
   $('e-tag').value = ''; $('e-erreur').style.display = 'none'; $('e-enregistrer').disabled = false;
   if (!nouveau) $('e-gemini').textContent = '';
+  $('e-dicter').value = ''; $('e-dicter-res').textContent = ''; $('e-bloc-dicter').style.display = nouveau ? 'none' : '';
   $('e-bloc-fiche').style.display = nouveau ? 'none' : ''; $('e-bloc-fiche').open = false;
   $('e-nom').value = l.nom || ''; $('e-horaires').value = l.horaires_osm || '';
   $('e-lien-maps').value = l.lien_maps || ''; $('e-lien-commande').value = l.lien_commande || '';
@@ -910,6 +915,32 @@ $('e-verifier').onclick = async () => {
   } catch (e) { if (EDIT && EDIT.l === l) zone.textContent = 'Vérification impossible : ' + (e.message || e); }
 };
 $('e-horaires').oninput = () => { apercuHoraires(); chargerGrille(); };
+// ---- Dictée IA : l'IA propose, la page montre avant/après, rien n'est écrit avant « Appliquer » puis « Enregistrer »
+$('e-dicter-ok').onclick = async () => {
+  if (!EDIT || EDIT.nouveau) return;
+  const phrase = $('e-dicter').value.trim(), res = $('e-dicter-res'); if (!phrase) return;
+  res.textContent = 'L’IA lit ta consigne…';
+  let r; try { r = await appel('interpreterModification', EDIT.l.nom, $('e-horaires').value.trim(), EDIT.tags, phrase); }
+  catch (e) { res.textContent = '⚠ ' + (e && e.message || e); return; }
+  if (!r || r.erreur) { res.textContent = '⚠ ' + (r && r.erreur || 'pas de réponse'); return; }
+  const actuel = $('e-horaires').value.trim(), lignes = [];
+  let h = null;
+  if (r.horaires_osm) {
+    if (!parserHoraires(r.horaires_osm, true)) { res.textContent = '⚠ L’IA a proposé des horaires que l’appli ne sait pas lire (' + r.horaires_osm + '). Reformule.'; return; }
+    if (sansEsp(r.horaires_osm) !== sansEsp(actuel)) { h = r.horaires_osm;
+      lignes.push('<b>Horaires</b><br>avant : ' + echap(horairesFr(actuel) || 'aucun') + '<br>après : ' + echap(horairesFr(h))); }
+  }
+  const retirer = (r.tags_retirer || []).filter(t => EDIT.tags.includes(t)), ajouter = (r.tags_ajouter || []).filter(t => !EDIT.tags.some(x => norm(x) === norm(t)));
+  if (retirer.length) lignes.push('<b>Tags retirés</b> : ' + retirer.map(echap).join(', '));
+  if (ajouter.length) lignes.push('<b>Tags ajoutés</b> : ' + ajouter.map(echap).join(', '));
+  if (!lignes.length) { res.textContent = 'Rien à changer d’après cette consigne.'; return; }
+  res.innerHTML = lignes.join('<br>') + '<br><button type="button" class="lien" id="e-dicter-appliquer">Appliquer au formulaire</button>';
+  $('e-dicter-appliquer').onclick = () => {
+    if (h !== null) { $('e-horaires').value = h; apercuHoraires(); chargerGrille(); $('e-bloc-fiche').open = true; }
+    EDIT.tags = EDIT.tags.filter(t => !retirer.includes(t)).concat(ajouter);
+    rendreEdition(); res.textContent = '✓ repris dans le formulaire : relis, puis Enregistrer.'; $('e-dicter').value = '';
+  };
+};
 $('e-tag').oninput = rendreRechercheTag;
 $('e-tag').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ajouterTag(); } };
 $('e-sans-note').onclick = () => { EDIT.note = null; rendreEdition(); };
