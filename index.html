@@ -226,6 +226,8 @@
     <label class="champ" for="e-commentaire">Commentaire</label><textarea id="e-commentaire" rows="3"></textarea>
     <details id="e-bloc-fiche"><summary class="champ">Nom, horaires et liens</summary>
       <label class="champ" for="e-nom">Nom</label><input type="text" id="e-nom" maxlength="120">
+      <button type="button" class="lien" id="e-verifier">🔎 Vérifier ce lieu dans OpenStreetMap</button>
+      <div id="e-verif" class="sous" aria-live="polite"></div>
       <span class="champ">Horaires</span>
       <div id="e-grille"></div>
       <details id="e-bloc-texte"><summary class="sous">Format texte (OpenStreetMap)</summary>
@@ -702,7 +704,7 @@ function remplirEdition(l, nouveau) {
   $('e-bloc-fiche').style.display = nouveau ? 'none' : ''; $('e-bloc-fiche').open = false;
   $('e-nom').value = l.nom || ''; $('e-horaires').value = l.horaires_osm || '';
   $('e-lien-maps').value = l.lien_maps || ''; $('e-lien-commande').value = l.lien_commande || '';
-  apercuHoraires(); chargerGrille(); $('e-bloc-texte').open = false;
+  apercuHoraires(); chargerGrille(); $('e-bloc-texte').open = false; $('e-verif').textContent = '';
   rendreEdition();
   $('edition').classList.add('ouvert'); $('edition').scrollTop = 0;
 }
@@ -812,6 +814,38 @@ function rendreGrille() {
   });
 }
 function chargerGrille() { GRILLE = grilleDepuisTexte($('e-horaires').value); rendreGrille(); }
+/** « Vérifier ce lieu » : compare la fiche à OpenStreetMap ; ne remplit le formulaire que sur clic, n'enregistre rien. */
+const sansEsp = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+$('e-verifier').onclick = async () => {
+  if (!EDIT) return;
+  const l = EDIT.l, zone = $('e-verif'), nom = $('e-nom').value.trim() || l.nom;
+  zone.textContent = 'Recherche dans OpenStreetMap…';
+  try {
+    const pos = (l.lat != null && l.lat !== '' && l.lng != null && l.lng !== '') ? { lat: +l.lat, lng: +l.lng } : null;
+    const cands = (await chercherOSM(nom, '')).filter(c => c.ressemblance >= 0.6)
+      .map(c => ({ c, d: pos ? distanceM(pos, c) : null })).filter(x => x.d == null || x.d <= 300)
+      .sort((a, b) => (b.c.ressemblance - a.c.ressemblance) || ((a.d ?? 0) - (b.d ?? 0)));
+    if (!EDIT || EDIT.l !== l) return; // formulaire fermé ou changé entre-temps
+    if (!cands.length) { zone.textContent = 'Introuvable dans OpenStreetMap (à moins de 300 m, nom ressemblant). Ça ne dit rien sur le lieu : OSM ne connaît pas tous les petits lieux.'; return; }
+    const { c, d } = cands[0], lignes = [];
+    lignes.push(`<b>${echap(c.nom_osm)}</b> · ${echap(c.adresse || 'adresse inconnue')}${d != null ? ' · à ' + Math.round(d) + ' m' : ''}`);
+    if (c.ferme) lignes.push('⚠️ OpenStreetMap signale ce lieu comme fermé ou disparu (étiquette disused:/was:). À vérifier.');
+    const actuel = $('e-horaires').value.trim();
+    if (!c.horaires_osm) lignes.push('Horaires : OSM n’en a pas pour ce lieu (ça ne veut pas dire qu’il est fermé).');
+    else if (sansEsp(c.horaires_osm) === sansEsp(actuel)) lignes.push('Horaires : identiques à OSM ✓');
+    else if (!parserHoraires(c.horaires_osm, true)) lignes.push('Horaires OSM (format non géré par l’appli) : ' + echap(c.horaires_osm));
+    else lignes.push('Horaires OSM : ' + echap(horairesFr(c.horaires_osm)) + (actuel ? ' (différent de ta fiche)' : ' (ta fiche n’en a pas)')
+      + ' <button type="button" class="lien" id="e-verif-horaires">Utiliser ces horaires</button>');
+    if (c.adresse && l.adresse && norm(c.adresse.split(',')[0]) !== norm(String(l.adresse).split(',')[0])) lignes.push('Adresse OSM différente de la fiche : ' + echap(c.adresse) + ' (modifiable plus tard, lot B).');
+    if (c.cuisine_osm) lignes.push('Cuisine OSM : ' + echap(c.cuisine_osm));
+    if (c.site) lignes.push('Site : ' + (/^https?:\/\//i.test(c.site) ? `<a href="${echap(c.site)}" target="_blank" rel="noopener">${echap(c.site)}</a>` : echap(c.site)));
+    if (c.tel) lignes.push('Téléphone : ' + echap(c.tel));
+    if (c.lien_osm) lignes.push(`<a href="${c.lien_osm}" target="_blank" rel="noopener">Voir sur OpenStreetMap</a>`);
+    zone.innerHTML = lignes.map(x => '<p style="margin:4px 0">' + x + '</p>').join('');
+    const b = $('e-verif-horaires');
+    if (b) b.onclick = () => { $('e-horaires').value = c.horaires_osm; $('e-horaires').dispatchEvent(new Event('input')); b.replaceWith('✓ repris dans le formulaire : pense à Enregistrer'); };
+  } catch (e) { if (EDIT && EDIT.l === l) zone.textContent = 'Vérification impossible : ' + (e.message || e); }
+};
 $('e-horaires').oninput = () => { apercuHoraires(); chargerGrille(); };
 $('e-tag').oninput = rendreRechercheTag;
 $('e-tag').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ajouterTag(); } };
@@ -896,7 +930,9 @@ async function chercherOSM(nom, precision) {
     return { nom_osm: nomOsm, ressemblance: ressemblance(nom, nomOsm), categorie: r.category + '/' + r.type,
       alimentaire: !!TYPE_OSM[r.type] && (r.category === 'amenity' || r.category === 'shop'), type: TYPE_OSM[r.type] || '',
       cuisine_osm: x.cuisine || '', adresse: [rue, [a.postcode, ville].filter(Boolean).join(' ')].filter(Boolean).join(', '),
-      ville, lat: +r.lat, lng: +r.lon, horaires_osm: x.opening_hours || '' };
+      ville, lat: +r.lat, lng: +r.lon, horaires_osm: x.opening_hours || '',
+      site: x.website || x['contact:website'] || '', tel: x.phone || x['contact:phone'] || '',
+      ferme: Object.keys(x).some(k => /^(disused|was|abandoned):/.test(k)), lien_osm: r.osm_type && r.osm_id ? 'https://www.openstreetmap.org/' + r.osm_type + '/' + r.osm_id : '' };
   }).sort((a, b) => (b.alimentaire - a.alimentaire) || (b.ressemblance - a.ressemblance))
     .filter(c => c.alimentaire || c.ressemblance >= 0.5).slice(0, 3);
 }
