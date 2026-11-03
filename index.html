@@ -226,8 +226,11 @@
     <label class="champ" for="e-commentaire">Commentaire</label><textarea id="e-commentaire" rows="3"></textarea>
     <details id="e-bloc-fiche"><summary class="champ">Nom, horaires et liens</summary>
       <label class="champ" for="e-nom">Nom</label><input type="text" id="e-nom" maxlength="120">
-      <label class="champ" for="e-horaires">Horaires (format OpenStreetMap)</label>
-      <input type="text" id="e-horaires" maxlength="300" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Mo-Fr 12:00-14:30,19:00-22:30; Sa 19:00-22:30">
+      <span class="champ">Horaires</span>
+      <div id="e-grille"></div>
+      <details id="e-bloc-texte"><summary class="sous">Format texte (OpenStreetMap)</summary>
+        <input type="text" id="e-horaires" maxlength="300" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Horaires au format OpenStreetMap" placeholder="Mo-Fr 12:00-14:30,19:00-22:30; Sa 19:00-22:30">
+      </details>
       <div id="e-horaires-apercu" class="sous"></div>
       <label class="champ" for="e-lien-maps">Lien Maps</label><input type="text" id="e-lien-maps" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…">
       <label class="champ" for="e-lien-commande">Lien de commande</label><input type="text" id="e-lien-commande" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…">
@@ -699,7 +702,7 @@ function remplirEdition(l, nouveau) {
   $('e-bloc-fiche').style.display = nouveau ? 'none' : ''; $('e-bloc-fiche').open = false;
   $('e-nom').value = l.nom || ''; $('e-horaires').value = l.horaires_osm || '';
   $('e-lien-maps').value = l.lien_maps || ''; $('e-lien-commande').value = l.lien_commande || '';
-  apercuHoraires();
+  apercuHoraires(); chargerGrille(); $('e-bloc-texte').open = false;
   rendreEdition();
   $('edition').classList.add('ouvert'); $('edition').scrollTop = 0;
 }
@@ -756,7 +759,60 @@ function apercuHoraires() {
   el.innerHTML = p.h.map((pl, j) => NOMS_JOURS[j] + ' : ' + (pl.length ? pl.map(([d, f]) => hhmm(d) + '–' + hhmm(f)).join(', ') : 'fermé')).join('<br>');
   return true;
 }
-$('e-horaires').oninput = apercuHoraires;
+// ---- Éditeur d'horaires visuel : grille 7 jours <-> chaîne OSM du champ #e-horaires (qui reste la source enregistrée)
+let GRILLE = null; // 7 × { ouvert: bool, pl: [[ 'HH:MM', 'HH:MM' ], …] }
+const valHeure = s => /^\d\d:\d\d$/.test(s);
+function texteDepuisGrille(g) {
+  const parts = g.map(x => !x.ouvert ? '' : x.pl.filter(([d, f]) => valHeure(d) && valHeure(f) && d !== f).map(([d, f]) => d + '-' + f).join(','));
+  const out = []; let j = 0;
+  while (j < 7) {
+    if (!parts[j]) { j++; continue; }
+    let k = j; while (k + 1 < 7 && parts[k + 1] === parts[j]) k++;
+    out.push((k > j ? JOURS_OH[j] + '-' + JOURS_OH[k] : JOURS_OH[j]) + ' ' + parts[j]); j = k + 1;
+  }
+  return out.join('; ');
+}
+function grilleDepuisTexte(s) { // -> grille, ou null si le texte est illisible ou ne tient pas dans la grille sans perte
+  s = s.trim();
+  if (!s) return JOURS_OH.map(() => ({ ouvert: false, pl: [] }));
+  const p = parserHoraires(s, true); if (!p) return null;
+  const g = p.h.map(pl => ({ ouvert: pl.length > 0, pl: pl.map(([d, f]) => [hhmm(d), hhmm(f)]) }));
+  const re = parserHoraires(texteDepuisGrille(g), true);
+  return re && JSON.stringify(re.h) === JSON.stringify(p.h) ? g : null;
+}
+function majDepuisGrille() { $('e-horaires').value = texteDepuisGrille(GRILLE); apercuHoraires(); }
+function rendreGrille() {
+  const el = $('e-grille'); el.innerHTML = '';
+  if (!GRILLE) { el.innerHTML = '<p class="sous">Horaires trop particuliers pour la grille : modifie le format texte ci-dessous.</p>'; return; }
+  const NOMS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+  GRILLE.forEach((x, j) => {
+    const ligne = document.createElement('div'); ligne.className = 'hg-jour'; ligne.style.cssText = 'margin:6px 0;padding:6px 0;border-top:1px solid #ddd';
+    const tete = document.createElement('div'); tete.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = x.ouvert; cb.id = 'hg-o' + j; cb.setAttribute('aria-label', NOMS[j] + ' ouvert');
+    cb.onchange = () => { x.ouvert = cb.checked; if (x.ouvert && !x.pl.length) x.pl.push(['12:00', '14:30']); rendreGrille(); majDepuisGrille(); };
+    const lab = document.createElement('label'); lab.htmlFor = cb.id; lab.style.cssText = 'min-width:78px;font-weight:600'; lab.textContent = NOMS[j];
+    const etat = document.createElement('span'); etat.className = 'sous'; etat.textContent = x.ouvert ? '' : 'Fermé';
+    tete.append(cb, lab, etat);
+    if (j > 0) { const c = document.createElement('button'); c.type = 'button'; c.className = 'lien'; c.textContent = 'Comme ' + NOMS[j - 1].toLowerCase();
+      c.onclick = () => { GRILLE[j] = JSON.parse(JSON.stringify(GRILLE[j - 1])); rendreGrille(); majDepuisGrille(); }; tete.appendChild(c); }
+    ligne.appendChild(tete);
+    if (x.ouvert) {
+      x.pl.forEach((pl, i) => {
+        const r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:6px;margin:4px 0 0 28px';
+        [0, 1].forEach(n => { const t = document.createElement('input'); t.type = 'time'; t.value = pl[n]; t.setAttribute('aria-label', NOMS[j] + (n ? ' fermeture ' : ' ouverture ') + (i + 1));
+          t.oninput = () => { pl[n] = t.value; majDepuisGrille(); }; r.appendChild(t); if (!n) r.appendChild(document.createTextNode('→')); });
+        const sup = document.createElement('button'); sup.type = 'button'; sup.className = 'lien'; sup.textContent = '×'; sup.setAttribute('aria-label', 'Retirer cette plage');
+        sup.onclick = () => { x.pl.splice(i, 1); if (!x.pl.length) x.ouvert = false; rendreGrille(); majDepuisGrille(); }; r.appendChild(sup);
+        ligne.appendChild(r);
+      });
+      if (x.pl.length < 3) { const a = document.createElement('button'); a.type = 'button'; a.className = 'lien'; a.style.marginLeft = '28px'; a.textContent = '+ plage';
+        a.onclick = () => { x.pl.push(['19:00', '22:30']); rendreGrille(); majDepuisGrille(); }; ligne.appendChild(a); }
+    }
+    el.appendChild(ligne);
+  });
+}
+function chargerGrille() { GRILLE = grilleDepuisTexte($('e-horaires').value); rendreGrille(); }
+$('e-horaires').oninput = () => { apercuHoraires(); chargerGrille(); };
 $('e-tag').oninput = rendreRechercheTag;
 $('e-tag').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ajouterTag(); } };
 $('e-sans-note').onclick = () => { EDIT.note = null; rendreEdition(); };
