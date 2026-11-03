@@ -895,7 +895,11 @@ async function utiliserManuel() {
     const lien = /^https?:\/\//i.test(t) || /^\s*-?\d{1,2}\.\d+\s*[,;\s]\s*-?\d{1,3}\.\d+\s*$/.test(t);
     let r;
     if (lien) { // position lue dans le lien ; l'adresse vient du géocodeur, sans elle le lieu est enregistré « adresse à trouver »
-      const p = coordsDepuisLien(t); r = await appel('localiserLieu', '', p.lat, p.lng);
+      let tl = t; // lien court (bouton « Partager » de l'appli Maps) : le serveur le suit jusqu'au lien long
+      if (/(^|\/\/)(maps\.app\.goo\.gl|goo\.gl)\b/i.test(t)) {
+        msg.textContent = 'Lecture du lien Google Maps…'; const s = await appel('resoudreLienMaps', t);
+        if (s.erreur) throw new Error(s.erreur); tl = s.lien; }
+      const p = coordsDepuisLien(tl); r = await appel('localiserLieu', '', p.lat, p.lng);
       if (r.erreur && /hors de/.test(r.erreur)) throw new Error('Ce lieu est hors de la métropole de Lyon : l\'app ne gère que Lyon.');
       if (r.erreur) r = { adresse: '', ville: '', lat: p.lat, lng: p.lng };
     } else {
