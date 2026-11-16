@@ -148,7 +148,7 @@
   #reperes button { border: 1px solid var(--bord); background: var(--fond); color: var(--texte); border-radius: 18px;
                     padding: 7px 12px; font: inherit; font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.2); max-width: 100%;
                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #reperes .poser { color: var(--accent); font-weight: 600; }
+  #reperes .poser, #reperes .voir { color: var(--accent); font-weight: 600; }
   .repere { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid #fff;
             box-shadow: 0 1px 5px rgba(0,0,0,.45); }
   .repere span { display: block; transform: rotate(45deg); color: #fff; font: 700 15px/26px system-ui, sans-serif; text-align: center; }
@@ -162,7 +162,7 @@
 <body>
 <div id="carte"></div>
 <div id="barre">
-  <input id="recherche" type="search" placeholder="Chercher un nom, une adresse…" aria-label="Chercher un lieu">
+  <input id="recherche" type="search" enterkeyhint="search" placeholder="Chercher un nom, une adresse…" aria-label="Chercher un lieu">
   <button id="btnFiltres" type="button" aria-expanded="false">Filtres</button>
   <button id="btnActualiser" type="button" aria-label="Actualiser depuis le Sheet" title="Actualiser depuis le Sheet">↻</button>
 </div>
@@ -1161,7 +1161,31 @@ document.getElementById('f-commander').onchange = () => afficher();
 document.getElementById('f-ouvert').onchange = () => { if (document.getElementById('f-ouvert').checked) document.getElementById('f-jour').value = ''; afficher(); };
 document.getElementById('f-jour').onchange = () => { if (momentChoisi()) document.getElementById('f-ouvert').checked = false; afficher(); };
 document.getElementById('f-heure').onchange = () => afficher();
-document.getElementById('recherche').oninput = () => afficher();
+// Validation de la recherche (Entrée ou pastille 🎯) : recentre la carte sur le lieu ; plusieurs lieux = cadrage + pastilles de choix.
+let CHOIX_RECH = [];
+document.getElementById('recherche').oninput = () => { CHOIX_RECH = []; afficher(); };
+function centrerSur(l) {
+  FOCUS_LIEU = true; const m = MARQUEURS[l.id]; if (!m) return;
+  carte.setView(m.getLatLng(), Math.max(carte.getZoom(), 16)); m.openPopup();
+}
+function voirRecherche() {
+  const q = $('recherche').value.trim(); if (!q) return;
+  $('recherche').blur(); CHOIX_RECH = [];
+  const trouves = LIEUX.filter(l => garde(l) && l.lat != null && l.lng != null);
+  if (!trouves.length) {
+    const nq = norm(q), texte = LIEUX.filter(l => l._texte.includes(nq));
+    if (!texte.length) toast('Aucun lieu trouvé pour « ' + q + ' »');
+    else if (!texte.some(l => l.lat != null && l.lng != null)) toast("« " + q + " » n'a pas encore de position sur la carte");
+    else CHOIX_RECH = [{ t: '« ' + q + ' » est masqué par tes filtres : les retirer', f: () => { $('btnRaz').onclick(); choix.statut = new Set(STATUTS); construireFiltres(); afficher(); voirRecherche(); } }];
+  } else if (trouves.length === 1) { centrerSur(trouves[0]);
+  } else {
+    FOCUS_LIEU = true; carte.closePopup();
+    carte.fitBounds(L.latLngBounds(trouves.map(l => [l.lat, l.lng])), { padding: [60, 60], maxZoom: 16 });
+    if (trouves.length <= 6) CHOIX_RECH = trouves.map(l => ({ t: l.nom + (l.adresse ? ' : ' + l.adresse.split(',')[0] : ''), f: () => centrerSur(l) }));
+  }
+  majReperes();
+}
+$('recherche').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); voirRecherche(); } });
 
 // Repères d'adresse (A, B) : posés sur la carte pour situer une adresse (la sienne, celle d'un ami) par rapport aux lieux.
 // Rien n'est enregistré : ni dans le Sheet, ni dans ce téléphone.
@@ -1188,8 +1212,9 @@ function majReperes() {
   if (IA.ref) L.circle([IA.ref.lat, IA.ref.lng], { radius: IA.rayon, color: '#6d28d9', weight: 2, dashArray: '6 6', fillOpacity: .05, interactive: false }).addTo(calqueReperes);
   const zone = $('reperes'), q = $('recherche').value.trim();
   zone.innerHTML = '';
-  if (q) { [['📍 Placer « ' + q + ' » sur la carte', poserAdresse], ['✨ Demander à l\'IA : « ' + q + ' »', demanderIA]].forEach(([t, f]) => {
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'poser'; b.textContent = t; b.onclick = f; zone.appendChild(b); }); }
+  if (q) { [['🎯 Voir « ' + q + ' » sur la carte (' + LIEUX.filter(l => garde(l) && l.lat != null).length + ')', voirRecherche], ['📍 Placer « ' + q + ' » sur la carte', poserAdresse], ['✨ Demander à l\'IA : « ' + q + ' »', demanderIA]].forEach(([t, f]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = f === voirRecherche ? 'voir' : 'poser'; b.textContent = t; b.onclick = f; zone.appendChild(b); }); }
+  CHOIX_RECH.forEach(c => { const b = document.createElement('button'); b.type = 'button'; b.className = 'voir'; b.textContent = '→ ' + c.t; b.onclick = c.f; zone.appendChild(b); });
   if (IA.resume) { const b = document.createElement('button'); b.type = 'button'; b.textContent = '✨ ' + IA.resume + '  ✕'; b.title = 'Retirer la demande à l\'IA';
     b.onclick = razIA; zone.appendChild(b); }
   REPERES.forEach((p, i) => { if (!p) return; const b = document.createElement('button'); b.type = 'button';
